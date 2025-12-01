@@ -1,3 +1,13 @@
+# What is this?
+
+Currently nothing since it doesn't work now. But it will be...
+
+Partial rewrite of Bosch Research's neuz++. The main differences will be
+1. The Python version is now 3.14 instead of 3.8(?)
+2. The ML stuff will be in PyTorch instead of Keras
+3. The AFL custom mutator will be written in Python instead of C (for now -- if it turns out to be really slow, then it'll be in C)
+
+
 # Neuzz++ - Neural program smoothing for fuzzing in AFL++
 
 Neuzz++ is an implementation of neural program smoothing for fuzzing as AFL++ custom mutator.
