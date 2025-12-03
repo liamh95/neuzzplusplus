@@ -33,6 +33,9 @@ class MLP(nn.Module):
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
+
+# Unlike keras version, we don't have a create_logits_model() function
+# the idea is that we'd do something like model.forward_logits(x) to get the output of that
     
 def predict_coverage(model: MLP, inputs: List[np.ndarray]) -> np.ndarray:
     """
@@ -50,7 +53,12 @@ def predict_coverage(model: MLP, inputs: List[np.ndarray]) -> np.ndarray:
     inputs.preproc = pad_inputs(inputs, padding='post', maxlen=model.input_dim)
     inputs_preproc = inputs_preproc.to(torch.float32) / 255.0
 
-    predictions = model(inputs_preproc)
+    model.eval()
+    with torch.no_grad():
+        preds = model(inputs_preproc).cpu().numpy()
+    model.train()
+    return preds > 0.5
+
 
 
 

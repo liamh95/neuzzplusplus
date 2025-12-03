@@ -23,7 +23,7 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 
 from neuzzpp.preprocess import create_bitmap_from_raw_coverage, create_path_coverage_bitmap
-from neuzzpp.utils import get_max_file_size
+from neuzzpp.utils import get_max_file_size, pad_sequences
 
 logger = logging.getLogger(__name__)
 

@@ -27,6 +27,7 @@ import tensorflow as tf
 logger = logging.getLogger(__name__)
 
 
+# no real equivalent of this in torch -- just write it in the training loop?
 class LRTensorBoard(tf.keras.callbacks.TensorBoard):
     """Custom TensorBoard callback that tracks the learning rate."""
 
@@ -356,3 +357,23 @@ def kill_fuzzer(fuzzer_command: str = "afl-fuzz", output_stream=subprocess.DEVNU
     # Can't avoid this because 'run_afl_fuzz' doesn't return a handle to
     # 'afl-fuzz' process so that we can kill it with subprocess.terminate()
     subprocess.call(["pkill", "-f", fuzzer_command], stdout=output_stream, stderr=output_stream)
+
+
+def pad_sequences(sequences, maxlen=None, padding='pre', truncating='pre', padding_value=0):
+    ret = []
+    if maxlen is None:
+        maxlen = max([len(seq) for seq in sequences])
+    for seq in sequences:
+        if truncating == 'pre':
+            seq = seq[-maxlen:]
+        else:
+            seq = seq[:maxlen]
+        
+        pad_len = maxlen - len(seq)
+        if padding = 'pre':
+            seq = torch.cat([torch.full((pad_len,), paddining_value), seq])
+        else:
+            seq = torch.cat([seq, torch.full((pad_len,), padding_value)])
+        ret.append(seq)
+
+    return torch.stack(ret)

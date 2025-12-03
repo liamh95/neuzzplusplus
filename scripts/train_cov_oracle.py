@@ -34,7 +34,8 @@ from sklearn.metrics import accuracy_score
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
 from neuzzpp.data_loaders import CoverageSeedHandler, SeedFolderHandler, seed_data_generator
-from neuzzpp.models import MLP, create_logits_model
+#from neuzzpp.models import MLP, create_logits_model
+from neuzzpp.models import MLP # our MLP class has forward_logits, which we use in place of the keras create_logits_model
 from neuzzpp.mutations import compute_one_mutation_info
 from neuzzpp.utils import (LRTensorBoard, create_work_folders,
                            model_needs_retraining)
