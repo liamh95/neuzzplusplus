@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_sequence
+from torch.nn.utils.rnn import pad_sequences
 
 
 class MLP(nn.Module):
@@ -50,7 +50,7 @@ def predict_coverage(model: MLP, inputs: List[np.ndarray]) -> np.ndarray:
     
 
     # need to mimic keras' pad_sequences
-    inputs.preproc = pad_inputs(inputs, padding='post', maxlen=model.input_dim)
+    inputs.preproc = pad_sequences(inputs, padding='post', maxlen=model.input_dim)
     inputs_preproc = inputs_preproc.to(torch.float32) / 255.0
 
     model.eval()
@@ -60,23 +60,5 @@ def predict_coverage(model: MLP, inputs: List[np.ndarray]) -> np.ndarray:
     return preds > 0.5
 
 
-
-
-def pad_inputs(inputs, maxlen=None, padding='pre', truncating='pre', padding_value=0):
-    ret = []
-    for ipt in inputs:
-        if truncating == 'pre':
-            ipt = ipt[-maxlen:]
-        else:
-            ipt = ipt[:maxlen]
-        
-        pad_len = maxlen - len(seq)
-        if padding = 'pre':
-            ipt = torch.cat([torch.full((pad_len,), paddining_value), ipt])
-        else:
-            ipt = torch.cat([ipt, torch.full((pad_len,), padding_value)])
-        ret.append(ipt)
-
-    return torch.stack(ret)
 
     

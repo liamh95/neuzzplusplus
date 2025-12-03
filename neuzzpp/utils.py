@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import tensorflow as tf
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -370,8 +371,8 @@ def pad_sequences(sequences, maxlen=None, padding='pre', truncating='pre', paddi
             seq = seq[:maxlen]
         
         pad_len = maxlen - len(seq)
-        if padding = 'pre':
-            seq = torch.cat([torch.full((pad_len,), paddining_value), seq])
+        if padding == 'pre':
+            seq = torch.cat([torch.full((pad_len,), padding_value), seq])
         else:
             seq = torch.cat([seq, torch.full((pad_len,), padding_value)])
         ret.append(seq)

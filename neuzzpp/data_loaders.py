@@ -21,6 +21,7 @@ from typing import Callable, Dict, Generator, List, Optional, Set, Tuple, Union
 import numpy as np
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
+from torch.utils.data import Dataset, DataLoader
 
 from neuzzpp.preprocess import create_bitmap_from_raw_coverage, create_path_coverage_bitmap
 from neuzzpp.utils import get_max_file_size, pad_sequences
@@ -261,9 +262,7 @@ def load_normalized_seeds(seed_list: List[Union[pathlib.Path, str]], max_len: in
     seeds = read_seeds(seed_list)
 
     # Pad seed with zeros up to max_len
-    seeds_preproc = tf.keras.preprocessing.sequence.pad_sequences(
-        seeds, padding="post", dtype="float32", maxlen=max_len
-    )
+    seeds_preproc  = pad_sequences(seeds, padding='post', maxlen=max_len)
     seeds_preproc = seeds_preproc.astype("float32") / 255.0
 
     return seeds_preproc
