@@ -29,6 +29,27 @@ from neuzzpp.utils import get_max_file_size, pad_sequences
 logger = logging.getLogger(__name__)
 
 
+
+class BitmapDataset(Dataset):
+    def __init__(self, seeds: List[np.ndarray], bitmaps: np.ndarray):
+        """
+        Dataset containing seeds and their corresponding coverage bitmaps.
+
+        Args:
+            seeds: List of preprocessed seeds as Numpy arrays.
+            bitmaps: Numpy array of coverage bitmaps.
+        """
+        self.seeds = seeds
+        self.bitmaps = bitmaps
+
+    def __len__(self) -> int:
+        return len(self.seeds)
+
+    def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
+        return self.seeds[idx], self.bitmaps[idx]
+
+
+
 class SeedFolderHandler:
     def __init__(
         self,
