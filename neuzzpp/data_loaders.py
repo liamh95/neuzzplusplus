@@ -31,7 +31,17 @@ logger = logging.getLogger(__name__)
 
 
 class BitmapDataset(Dataset):
-    def __init__(self, seeds: List[np.ndarray], bitmaps: np.ndarray):
+    def __init__(
+        self,
+        seeds_path: pathlib.Path,
+        target: List[str],
+        bitmap_func: Callable[
+            [List[str], List[pathlib.Path]], Dict[pathlib.Path, Optional[Set[int]]]
+        ],
+        max_len: Optional[int] = None,
+        percentile_len: Optional[int] = None,
+        validation_split: float = 0.0,
+    ) -> None:
         """
         Dataset containing seeds and their corresponding coverage bitmaps.
 
@@ -39,14 +49,33 @@ class BitmapDataset(Dataset):
             seeds: List of preprocessed seeds as Numpy arrays.
             bitmaps: Numpy array of coverage bitmaps.
         """
-        self.seeds = seeds
-        self.bitmaps = bitmaps
+        if validation_split and not 0 < validation_split < 1:
+            err = f"`validation_split` must be between 0 and 1, received: {validation_split}"
+            logger.exception(err)
+            raise ValueError(err)
+        if max_len is not None and max_len <= 0:
+            err = f"Maximum seed length must be greater than 0, received: {max_len}"
+            logger.exception(err)
+            raise ValueError(err)
+
+        self.validation_split = validation_split
+        self.max_len = max_len
+        self.percentile_len = percentile_len
+        self.seeds_path = seeds_path
+        self.target = target
+        self.bitmap_func = bitmap_func
+        self.seed_list: Optional[List[pathlib.Path]] = None
+        self.raw_coverage_info: Dict[pathlib.Path, Set[int]] = {}
+        self.reduced_bitmap: Optional[np.ndarray] = None
 
     def __len__(self) -> int:
-        return len(self.seeds)
+        return len(self.seed_list)
 
+    # have init save a list of seed paths, have this load the seed from path with corresponding index?
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
-        return self.seeds[idx], self.bitmaps[idx]
+        with open(path, "rb") as seed_file:
+            seed = seed_file.read()
+        return np.asarray(bytearray(seed), dtype="uint8")
 
 
 
