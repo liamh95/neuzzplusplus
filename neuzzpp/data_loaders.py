@@ -64,7 +64,7 @@ class BitmapDataset(Dataset):
         self.seeds_path = seeds_path
         self.target = target
         self.bitmap_func = bitmap_func
-        self.seed_list: Optional[List[pathlib.Path]] = None
+        self.seed_list = self.generate_seed_list(self.seeds_path)
         self.raw_coverage_info: Dict[pathlib.Path, Set[int]] = {}
         self.reduced_bitmap: Optional[np.ndarray] = None
 
@@ -72,10 +72,17 @@ class BitmapDataset(Dataset):
         return len(self.seed_list)
 
     # have init save a list of seed paths, have this load the seed from path with corresponding index?
+    # should return the seed AND its bitmap
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
         with open(path, "rb") as seed_file:
             seed = seed_file.read()
         return np.asarray(bytearray(seed), dtype="uint8")
+
+    def generate_seed_list(self) -> None:
+        """
+        Generate the list of seeds from the seeds folder.
+        """
+        self.seed_list = [seed for seed in self.seeds_path.glob("*") if seed.is_file()]
 
 
 
