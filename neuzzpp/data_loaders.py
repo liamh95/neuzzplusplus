@@ -19,9 +19,10 @@ import pathlib
 from typing import Callable, Dict, Generator, List, Optional, Set, Tuple, Union
 
 import numpy as np
-import tensorflow as tf
-from sklearn.model_selection import train_test_split
-from torch.utils.data import Dataset, DataLoader
+# import tensorflow as tf
+import torch
+# from sklearn.model_selection import train_test_split
+from torch.utils.data import Dataset
 
 from neuzzpp.preprocess import create_bitmap_from_raw_coverage, create_path_coverage_bitmap
 from neuzzpp.utils import get_max_file_size, pad_sequences
@@ -29,8 +30,9 @@ from neuzzpp.utils import get_max_file_size, pad_sequences
 logger = logging.getLogger(__name__)
 
 
+class SeedFolderDataset(Dataset):
+    """PyTorch Dataset for seeds from a folder with coverage bitmaps."""
 
-class BitmapDataset(Dataset):
     def __init__(
         self,
         seeds_path: pathlib.Path,
@@ -40,104 +42,47 @@ class BitmapDataset(Dataset):
         ],
         max_len: Optional[int] = None,
         percentile_len: Optional[int] = None,
-        validation_split: float = 0.0,
     ) -> None:
         """
-        Dataset containing seeds and their corresponding coverage bitmaps.
-
-        Args:
-            seeds: List of preprocessed seeds as Numpy arrays.
-            bitmaps: Numpy array of coverage bitmaps.
-        """
-        if validation_split and not 0 < validation_split < 1:
-            err = f"`validation_split` must be between 0 and 1, received: {validation_split}"
-            logger.exception(err)
-            raise ValueError(err)
-        if max_len is not None and max_len <= 0:
-            err = f"Maximum seed length must be greater than 0, received: {max_len}"
-            logger.exception(err)
-            raise ValueError(err)
-
-        self.validation_split = validation_split
-        self.max_len = max_len
-        self.percentile_len = percentile_len
-        self.seeds_path = seeds_path
-        self.target = target
-        self.bitmap_func = bitmap_func
-        self.seed_list = self.generate_seed_list(self.seeds_path)
-        self.raw_coverage_info: Dict[pathlib.Path, Set[int]] = {}
-        self.reduced_bitmap: Optional[np.ndarray] = None
-
-    def __len__(self) -> int:
-        return len(self.seed_list)
-
-    # have init save a list of seed paths, have this load the seed from path with corresponding index?
-    # should return the seed AND its bitmap
-    def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
-        with open(path, "rb") as seed_file:
-            seed = seed_file.read()
-        return np.asarray(bytearray(seed), dtype="uint8")
-
-    def generate_seed_list(self) -> None:
-        """
-        Generate the list of seeds from the seeds folder.
-        """
-        self.seed_list = [seed for seed in self.seeds_path.glob("*") if seed.is_file()]
-
-
-
-class SeedFolderHandler:
-    def __init__(
-        self,
-        seeds_path: pathlib.Path,
-        target: List[str],
-        bitmap_func: Callable[
-            [List[str], List[pathlib.Path]], Dict[pathlib.Path, Optional[Set[int]]]
-        ],
-        max_len: Optional[int] = None,
-        percentile_len: Optional[int] = None,
-        validation_split: float = 0.0,
-    ) -> None:
-        """
-        Initialize a dataset handler based on a seed folder.
+        Initialize a PyTorch Dataset for seeds and their coverage bitmaps.
 
         Args:
             seeds_path: Path to the seeds folder.
             target: Name of the fuzzing target in a callable format with its arguments.
+            bitmap_func: Callable that computes coverage bitmaps for given seeds.
             max_len: Optional limit for the maximum seed length.
             percentile_len: Optional length percentile to keep as maximum seed length (1-100);
                 ignored if `max_len` is provided.
-            validation_split: Percentage of data to reserve for model validation.
         """
-        if validation_split and not 0 < validation_split < 1:
-            err = f"`validation_split` must be between 0 and 1, received: {validation_split}"
-            logger.exception(err)
-            raise ValueError(err)
         if max_len is not None and max_len <= 0:
             err = f"Maximum seed length must be greater than 0, received: {max_len}"
             logger.exception(err)
             raise ValueError(err)
 
-        self.validation_split = validation_split
-        self.max_len = max_len
-        self.percentile_len = percentile_len
-        self.seeds_path = seeds_path
+        self.seeds_path = pathlib.Path(seeds_path)
         self.target = target
         self.bitmap_func = bitmap_func
-        self.seed_list: Optional[List[pathlib.Path]] = None
+        self.max_len = max_len
+        self.percentile_len = percentile_len
+        self.seed_list: List[pathlib.Path] = []
         self.raw_coverage_info: Dict[pathlib.Path, Set[int]] = {}
         self.reduced_bitmap: Optional[np.ndarray] = None
+        self.max_file_size: int = 0
+        self.max_bitmap_size: int = 0
+
+        # Load seeds on initialization
+        self.load_seeds_from_folder()
 
     def load_seeds_from_folder(self) -> None:
         """
-        Reload seeds information from queue folder. Only new seeds are considered.
-        The coverage bitmap is recomputed and stored, along with other dataset info.
+        Load seeds information from folder and compute coverage bitmaps.
+        Only new seeds are considered since last load.
         """
-        # Determine if there are any new seeds in folder since last loaded
+        # Determine new seeds in folder
         new_seed_list: List[pathlib.Path] = [
             seed for seed in self.seeds_path.glob("*") if seed.is_file()
         ]
-        if self.seed_list is not None:
+        if self.seed_list:
             new_seeds = list(set(new_seed_list) - set(self.seed_list))
         else:
             new_seeds = new_seed_list
@@ -149,7 +94,7 @@ class SeedFolderHandler:
                 self.raw_coverage_info
             )
 
-        # Compute "optimal" max seed length if not provided - this dictates the model input size
+        # Compute "optimal" max seed length if not provided
         max_file_size = get_max_file_size(self.seeds_path)
         if self.max_len is None:
             max_len = compute_input_size_from_seeds(self.seeds_path, percentile=self.percentile_len)
@@ -162,88 +107,48 @@ class SeedFolderHandler:
         self.max_file_size = min(max_file_size, max_len)
         self.max_bitmap_size = self.reduced_bitmap.shape[1]
 
-    def split_dataset(self, random_seed: Optional[int] = None) -> None:
+    def __len__(self) -> int:
+        """Return the number of seeds in the dataset."""
+        return len(self.seed_list)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Split the seeds and corresponding bitmap into training and validation sets.
-        The obtained split is assigned as attributes of the current object.
+        Return normalized seed and its coverage bitmap at index.
 
         Args:
-            random_seed: Seed for random number generator impacting the seed split between
-                training and validation.
-        """
-        if self.validation_split > 0.0:
-            train_list, val_list, train_bitmaps, val_bitmaps = train_test_split(
-                self.seed_list,
-                self.reduced_bitmap,
-                test_size=self.validation_split,
-                random_state=random_seed,
-            )
-            train_list = [seed.as_posix() for seed in train_list]
-            val_list = [seed.as_posix() for seed in val_list]
-            self.training_set = (train_list, train_bitmaps)
-            self.training_size = len(train_list)
-            self.val_set = (val_list, val_bitmaps)
-            self.val_size = len(val_list)
-        else:
-            train_list = [seed.as_posix() for seed in self.seed_list]
-            self.training_set = (train_list, self.reduced_bitmap)
-            self.training_size = len(train_list)
-
-    def get_generator(self, batch_size: int, subset: str):
-        """
-        Create data generator based on the content of the seed folder.
-
-        Args:
-            batch_size: Batch size that the generator should produce.
-            subset: "training" or "validation". "validation" produces an error if no data was
-                set aside for validation.
+            idx: Index of the seed to retrieve.
 
         Returns:
-            Data generator for training or validation as used by `tf.keras.model.fit`.
+            Tuple of (normalized_seed, coverage_bitmap) as torch tensors.
         """
-        if subset == "training":
-            return tf.data.Dataset.from_generator(
-                seed_data_generator,
-                output_signature=(
-                    tf.TensorSpec(shape=(None, self.max_file_size), dtype=tf.float32),
-                    tf.TensorSpec(shape=(None, self.max_bitmap_size), dtype=tf.int32),
-                ),
-                args=[*self.training_set, batch_size, self.max_file_size],
-            )
-        elif subset == "validation":
-            if self.validation_split > 0.0:
-                return tf.data.Dataset.from_generator(
-                    seed_data_generator,
-                    output_signature=(
-                        tf.TensorSpec(shape=(None, self.max_file_size), dtype=tf.float32),
-                        tf.TensorSpec(shape=(None, self.max_bitmap_size), dtype=tf.int32),
-                    ),
-                    args=[*self.val_set, batch_size, self.max_file_size],
-                )
-            else:
-                err = "No validation set."
-                logger.exception(err)
-                raise ValueError(err)
-        else:
-            err = f"Unknown option for subset: {subset}. Use `training` or `validation`."
-            logger.exception(err)
-            raise ValueError(err)
+        seed_path = self.seed_list[idx]
+        seed = read_seed(seed_path)
+
+        # Normalize seed
+        seed_padded = pad_sequences([seed], padding='post', maxlen=self.max_file_size)[0]
+        seed_normalized = seed_padded.astype("float32") / 255.0
+
+        # Get bitmap
+        bitmap = self.reduced_bitmap[idx].astype("int32")
+
+        return torch.from_numpy(seed_normalized), torch.from_numpy(bitmap)
 
     def get_class_weights(self) -> Tuple[Dict[int, float], float]:
         """
-        Compute class weights and the initial bias of the model based on the seeds reserved
-        as training set.
+        Compute class weights and initial bias based on coverage distribution.
 
         Returns:
-            Class weights dict for classes 0 and 1, along with the initial bias.
+            Tuple of (class_weights_dict, initial_bias).
         """
-        n_neg = np.count_nonzero(self.training_set[1] == 0)
-        n_total = self.training_set[1].size
+        bitmap_flat = self.reduced_bitmap.flatten()
+        n_neg = np.count_nonzero(bitmap_flat == 0)
+        n_total = bitmap_flat.size
         n_pos = n_total - n_neg
-        weight_for_uncovered = (1.0 / n_neg) * (n_total / 2.0)
-        weight_for_covered = (1.0 / n_pos) * (n_total / 2.0)
+
+        weight_for_uncovered = (1.0 / n_neg) * (n_total / 2.0) if n_neg > 0 else 1.0
+        weight_for_covered = (1.0 / n_pos) * (n_total / 2.0) if n_pos > 0 else 1.0
         class_weights = {0: weight_for_uncovered, 1: weight_for_covered}
-        initial_bias = float(np.log([n_pos / n_neg]))
+        initial_bias = float(np.log([n_pos / n_neg])) if n_neg > 0 else 0.0
 
         logger.info(
             "Dataset:\n    Total: {}\n    Positive: {} ({:.2f}% of total)\n".format(
@@ -254,22 +159,31 @@ class SeedFolderHandler:
         return class_weights, initial_bias
 
 
-class CoverageSeedHandler(SeedFolderHandler):
+class CoverageSeedDataset(SeedFolderDataset):
+    """PyTorch Dataset for coverage-based seed selection."""
+
     def __init__(
         self,
         seeds_path: pathlib.Path,
         target: List[str],
         max_len: Optional[int] = None,
         percentile_len: Optional[int] = None,
-        validation_split: float = 0.0,
     ) -> None:
+        """
+        Initialize a PyTorch Dataset for coverage-based seeds.
+
+        Args:
+            seeds_path: Path to the seeds folder.
+            target: Name of the fuzzing target in a callable format with its arguments.
+            max_len: Optional limit for the maximum seed length.
+            percentile_len: Optional length percentile to keep as maximum seed length (1-100).
+        """
         super().__init__(
             seeds_path,
             target,
             bitmap_func=create_path_coverage_bitmap,
             max_len=max_len,
             percentile_len=percentile_len,
-            validation_split=validation_split,
         )
 
 
