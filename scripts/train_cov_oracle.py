@@ -29,11 +29,13 @@ import time
 from typing import Optional, Sequence
 
 import numpy as np
+import torch
+from torch.utils.data import random_split
 import tensorflow as tf
 from sklearn.metrics import accuracy_score
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
-from neuzzpp.data_loaders import CoverageSeedHandler, SeedFolderHandler, seed_data_generator
+from neuzzpp.data_loaders import CoverageSeedHandler, SeedFolderHandler, seed_data_generator, SeedFolderDataset
 #from neuzzpp.models import MLP, create_logits_model
 from neuzzpp.models import MLP # our MLP class has forward_logits, which we use in place of the keras create_logits_model
 from neuzzpp.mutations import compute_one_mutation_info
@@ -48,6 +50,78 @@ log_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(me
 console_logger.setFormatter(log_formatter)
 logger.addHandler(console_logger)
 
+
+
+def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn.Module:
+    """
+    Function loading the dataset from the seeds folder, building and training the model.
+
+    Args:
+        args: Input args of the script.
+        seed_dataset: Dataset initialized for the seed folder that will be used
+            for training.
+   Returns:
+        Trained model.
+    """ 
+    # Load and split dataset
+    seed_dataset.load_seeds_from_folder()
+    rng = torch.Generator().manual_seed(args.random_seed) if args.random_seed is not None else None
+    if args.val_split > 0.0:
+        training_dataset, validation_dataset = random_split(seed_dataset, [1.0 - args.val_split, args.val_split], generator=rng)
+    else:
+        training_dataset = seed_dataset
+        validation_dataset = None
+
+
+
+
+    # seed_dataset.split_dataset(random_seed=args.random_seed)
+    # training_generator = seed_dataset.get_generator(batch_size=args.batch_size, subset="training")
+    # if args.val_split > 0.0:
+    #     validation_generator = seed_dataset.get_generator(
+    #         batch_size=args.batch_size, subset="validation"
+    #     )
+    #     monitor_metric = "val_prc"
+    # else:
+    #     validation_generator = None
+    #     monitor_metric = "prc"
+
+    # Compute class frequencies and weights
+    _, initial_bias = seed_dataset.get_class_weights()
+
+    # Create training callbacks
+    seeds_path = pathlib.Path(args.seeds)
+    model_path = seeds_path.parent / "models"
+    callbacks = []
+    if not args.fast:
+        model_save = ModelCheckpoint(
+            str(model_path / "model.h5"),
+            verbose=0,
+            save_best_only=True,
+            monitor=monitor_metric,
+            mode="max",
+        )
+        callbacks.append(model_save)
+    if args.early_stopping is not None:
+        es = EarlyStopping(monitor=monitor_metric, patience=args.early_stopping, mode="max")
+        callbacks.append(es)
+
+    # Create model
+    if not args.fast:
+        tb_callback = LRTensorBoard(log_dir=str(model_path / "tensorboard"), write_graph=False)
+        callbacks.append(tb_callback)
+    model = MLP(
+        input_dim=seed_dataset.max_file_size,
+        output_dim=seed_dataset.max_bitmap_size,
+        learning_rate=args.lr,
+        hidden_dim=args.n_hidden_neurons,
+        output_bias=initial_bias,
+        fast=args.fast,
+    )
+
+    # Fit model
+    # TO DO: implement training loop in PyTorch
+    raise NotImplementedError("Training loop not implemented yet in PyTorch.")
 
 def train_model(args: argparse.Namespace, seed_handler: SeedFolderHandler):
     """

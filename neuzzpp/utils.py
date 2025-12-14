@@ -28,7 +28,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 
-# no real equivalent of this in torch -- just write it in the training loop?
+# TODO: migrate to PyTorch version of TensorBoard
 class LRTensorBoard(tf.keras.callbacks.TensorBoard):
     """Custom TensorBoard callback that tracks the learning rate."""
 
@@ -42,6 +42,31 @@ class LRTensorBoard(tf.keras.callbacks.TensorBoard):
         logs.update({"lr": tf.keras.backend.eval(val)})
         super().on_epoch_end(epoch, logs)
 
+class EarlyStopping:
+    def __init__(self, patience: int=5, delta: float=0.0):
+        self.patience = patience
+        self.delta = delta
+        self.best_score = None
+        self.early_stop = False
+        self.counter = 0
+        self.best_model_state = None
+
+    def __call__(self, val_score: flaot, model: torch.nn.Module):
+        if self.best_score is None:
+            self.best_score = val_score
+            self.best_model_state = model.state_dict()
+        elif val_score < self.best_score + self.delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = val_score
+            self.best_model_state = model.state_dict()
+            self.counter = 0
+
+    def load_best_model(self, model: torch.nn.Module):
+        if self.best_model_state is not None:
+            model.load_state_dict(self.best_model_state)
 
 def model_needs_retraining(
     seeds_path: pathlib.Path,
