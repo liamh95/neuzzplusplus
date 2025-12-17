@@ -51,7 +51,7 @@ class EarlyStopping:
         self.counter = 0
         self.best_model_state = None
 
-    def __call__(self, val_score: flaot, model: torch.nn.Module):
+    def __call__(self, val_score: float, model: torch.nn.Module):
         if self.best_score is None:
             self.best_score = val_score
             self.best_model_state = model.state_dict()

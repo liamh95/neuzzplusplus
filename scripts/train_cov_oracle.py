@@ -30,7 +30,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 import torch
-from torch.utils.data import random_split
+from torch.utils.data import random_split, DataLoader
 import tensorflow as tf
 from sklearn.metrics import accuracy_score
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
@@ -63,15 +63,18 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
    Returns:
         Trained model.
     """ 
-    # Load and split dataset
+    # Load and split dataset, setup dataloaders
     seed_dataset.load_seeds_from_folder()
     rng = torch.Generator().manual_seed(args.random_seed) if args.random_seed is not None else None
     if args.val_split > 0.0:
         training_dataset, validation_dataset = random_split(seed_dataset, [1.0 - args.val_split, args.val_split], generator=rng)
+        train_dataloader = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True)
+        val_dataloader = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=False)
     else:
         training_dataset = seed_dataset
         validation_dataset = None
-
+        train_dataloader = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True)
+        val_dataloader = None
 
 
 
@@ -92,6 +95,29 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
     # Create training callbacks
     seeds_path = pathlib.Path(args.seeds)
     model_path = seeds_path.parent / "models"
+
+    model = MLP(
+        input_dim=seed_dataset.max_file_size,
+        output_dim=seed_dataset.max_bitmap_size,
+        learning_rate=args.lr,
+        hidden_dim=args.n_hidden_neurons,
+        output_bias=initial_bias,
+        fast=args.fast,
+    )
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+
+    for epoch in range(args.epochs):
+        train_loss = 0.0
+        val_loss = 0.0
+
+        model.train()
+        for input, target in train_dataloader:
+            optimizer.zero_grad()
+
+
+        
+
     callbacks = []
     if not args.fast:
         model_save = ModelCheckpoint(
