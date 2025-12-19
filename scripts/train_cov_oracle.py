@@ -31,6 +31,8 @@ from typing import Optional, Sequence
 import numpy as np
 import torch
 from torch.utils.data import random_split, DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim import AdamW
 import tensorflow as tf
 from sklearn.metrics import accuracy_score
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
@@ -72,22 +74,10 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
         val_dataloader = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=False)
     else:
         training_dataset = seed_dataset
+        # Set this to training_dataset?
         validation_dataset = None
         train_dataloader = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True)
         val_dataloader = None
-
-
-
-    # seed_dataset.split_dataset(random_seed=args.random_seed)
-    # training_generator = seed_dataset.get_generator(batch_size=args.batch_size, subset="training")
-    # if args.val_split > 0.0:
-    #     validation_generator = seed_dataset.get_generator(
-    #         batch_size=args.batch_size, subset="validation"
-    #     )
-    #     monitor_metric = "val_prc"
-    # else:
-    #     validation_generator = None
-    #     monitor_metric = "prc"
 
     # Compute class frequencies and weights
     _, initial_bias = seed_dataset.get_class_weights()
@@ -96,6 +86,7 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
     seeds_path = pathlib.Path(args.seeds)
     model_path = seeds_path.parent / "models"
 
+    # Set up model
     model = MLP(
         input_dim=seed_dataset.max_file_size,
         output_dim=seed_dataset.max_bitmap_size,
@@ -105,15 +96,44 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
         fast=args.fast,
     )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    optimizer = AdamW(model.parameters(), lr=args.lr)
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=1000)
+    criterion = torch.nn.BCELoss()
 
     for epoch in range(args.epochs):
         train_loss = 0.0
         val_loss = 0.0
 
+        # training
         model.train()
-        for input, target in train_dataloader:
+        for batch_inputs, batch_labels in train_dataloader:
             optimizer.zero_grad()
+            outputs = model(batch_inputs)
+            loss = criterion(outputs, batch_labels)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item() * batch_inputs.size(0)
+            scheduler.step()
+        
+        # validation
+        model.eval()
+        with torch.no_grad():
+            if val_dataloader is not None:
+                for batch_inputs, batch_labels in val_dataloader:
+                    outputs = model(batch_inputs)
+                    loss = criterion(outputs, batch_labels)
+                    val_loss += loss.item() * batch_inputs.size(0)
+                    val_loss /= len(val_dataloader.dataset)
+            else:
+                for batch_inputs, batch_labels in train_dataloader:
+                    outputs = model(batch_inputs)
+                    loss = criterion(outputs, batch_labels)
+                    val_loss += loss.item() * batch_inputs.size(0)
+                    val_loss /= len(train_dataloader.dataset)
+            
+        # Check for early stopping
+        # Model checkpoint if not set to fast
+            
 
 
         
