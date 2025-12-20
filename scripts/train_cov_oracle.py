@@ -99,10 +99,12 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
     optimizer = AdamW(model.parameters(), lr=args.lr)
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=1000)
     criterion = torch.nn.BCELoss()
+    early_stopping = EarlyStopping()
 
     for epoch in range(args.epochs):
         train_loss = 0.0
         val_loss = 0.0
+        total_samples = 0
 
         # training
         model.train()
@@ -123,15 +125,17 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
                     outputs = model(batch_inputs)
                     loss = criterion(outputs, batch_labels)
                     val_loss += loss.item() * batch_inputs.size(0)
-                    val_loss /= len(val_dataloader.dataset)
+                    total_samples += batch_inputs.size(0)
             else:
                 for batch_inputs, batch_labels in train_dataloader:
                     outputs = model(batch_inputs)
                     loss = criterion(outputs, batch_labels)
                     val_loss += loss.item() * batch_inputs.size(0)
-                    val_loss /= len(train_dataloader.dataset)
+                    total_samples += batch_inputs.size(0)
+        avg_val_loss = val_loss / total_samples if total_samples > 0 else 0
             
         # Check for early stopping
+        early_stopping(avg_val_loss)
         # Model checkpoint if not set to fast
             
 
