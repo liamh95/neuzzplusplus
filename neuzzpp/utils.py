@@ -64,9 +64,9 @@ class EarlyStopping:
             self.best_model_state = model.state_dict()
             self.counter = 0
 
-    def load_best_model(self, model: torch.nn.Module):
-        if self.best_model_state is not None:
-            model.load_state_dict(self.best_model_state)
+    # def load_best_model(self, model: torch.nn.Module):
+    #     if self.best_model_state is not None:
+    #         model.load_state_dict(self.best_model_state)
 
 def model_needs_retraining(
     seeds_path: pathlib.Path,

@@ -134,9 +134,21 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
                     total_samples += batch_inputs.size(0)
         avg_val_loss = val_loss / total_samples if total_samples > 0 else 0
             
-        # Check for early stopping
+        # also saves best model (just state_dict to memory, not disk)
         early_stopping(avg_val_loss)
-        # Model checkpoint if not set to fast
+
+        if early_stopping.early_stop:
+            logger.info(f"Early stopping at epoch {epoch+1}")
+            break
+
+    # checkpointing
+    if early_stopping.best_model_state is not None:
+        model.load_state_dict(early_stopping.best_model_state)
+        if not args.fast:
+            best_model_path = model_path / "model_best.pt"
+            torch.save(model.state_dict(), best_model_path)
+
+
             
 
 
