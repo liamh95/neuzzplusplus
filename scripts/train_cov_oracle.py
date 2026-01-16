@@ -33,9 +33,7 @@ import torch
 from torch.utils.data import random_split, DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.optim import AdamW
-import tensorflow as tf
 from sklearn.metrics import accuracy_score
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
 from neuzzpp.data_loaders import CoverageSeedHandler, SeedFolderHandler, seed_data_generator, SeedFolderDataset
 #from neuzzpp.models import MLP, create_logits_model
