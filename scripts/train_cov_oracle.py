@@ -40,7 +40,7 @@ from neuzzpp.data_loaders import CoverageSeedHandler, SeedFolderHandler, seed_da
 from neuzzpp.models import MLP # our MLP class has forward_logits, which we use in place of the keras create_logits_model
 from neuzzpp.mutations import compute_one_mutation_info
 from neuzzpp.utils import (LRTensorBoard, create_work_folders,
-                           model_needs_retraining)
+                           model_needs_retraining, EarlyStopping)
 
 # Configure logger - console
 logger = logging.getLogger("neuzzpp")
@@ -146,42 +146,41 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
             best_model_path = model_path / "model_best.pt"
             torch.save(model.state_dict(), best_model_path)
 
+    # Compute evaluation metrics on validation data
+    if args.val_split > 0.0:
+        model.eval()
+        class_threshold = 0.5  # Classification threshold, use default of 0.5
+        all_preds = []
+        all_labels = []
+        with torch.no_grad():
+            for batch_inputs, batch_labels in val_dataloader:
+                outputs = model(batch_inputs)
+                all_preds.append(outputs.numpy())
+                all_labels.append(batch_labels.numpy())        
+
+
+
+        y_true = seed_handler.val_set[1]
+        y_pred = preds_val > class_threshold
+        acc = accuracy_score(y_true.flatten(), y_pred.flatten())
+        tp = np.sum(np.where(np.logical_and(y_true == y_pred, y_pred == 1), True, False), axis=0)
+        tn = np.sum(np.where(np.logical_and(y_true == y_pred, y_pred == 0), True, False), axis=0)
+        fp = np.sum(np.where(np.logical_and(y_true != y_pred, y_pred == 1), True, False), axis=0)
+        fn = np.sum(np.where(np.logical_and(y_true != y_pred, y_pred == 0), True, False), axis=0)
+        assert (tp + tn + fp + fn == seed_handler.val_size).all()
+        assert tp.shape[0] == tn.shape[0] == fp.shape[0] == fn.shape[0] == y_true.shape[1]
+        prec = np.divide(tp, tp + fp, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fp) != 0)
+        recall = np.divide(tp, tp + fn, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fn) != 0)
+        f1 = np.divide(2 * tp, 2 * tp + fp + fn, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fp + fn) != 0)
+        prc = tf.keras.metrics.AUC(curve="PR", multi_label=True, num_labels=y_true.shape[1])
+        prc.update_state(y_true, y_pred)
+        print(
+            f"Acc: {acc}, prec: {prec.mean()}, recall: {recall.mean()}, f1: {f1.mean()}, pr-auc: {prc.result().numpy()}"
+        )
+
 
             
-
-
-        
-
-    callbacks = []
-    if not args.fast:
-        model_save = ModelCheckpoint(
-            str(model_path / "model.h5"),
-            verbose=0,
-            save_best_only=True,
-            monitor=monitor_metric,
-            mode="max",
-        )
-        callbacks.append(model_save)
-    if args.early_stopping is not None:
-        es = EarlyStopping(monitor=monitor_metric, patience=args.early_stopping, mode="max")
-        callbacks.append(es)
-
-    # Create model
-    if not args.fast:
-        tb_callback = LRTensorBoard(log_dir=str(model_path / "tensorboard"), write_graph=False)
-        callbacks.append(tb_callback)
-    model = MLP(
-        input_dim=seed_dataset.max_file_size,
-        output_dim=seed_dataset.max_bitmap_size,
-        learning_rate=args.lr,
-        hidden_dim=args.n_hidden_neurons,
-        output_bias=initial_bias,
-        fast=args.fast,
-    )
-
-    # Fit model
-    # TO DO: implement training loop in PyTorch
-    raise NotImplementedError("Training loop not implemented yet in PyTorch.")
+    return model
 
 def train_model(args: argparse.Namespace, seed_handler: SeedFolderHandler):
     """
