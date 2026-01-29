@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 class SeedFolderDataset(Dataset):
     """PyTorch Dataset for seeds from a folder with coverage bitmaps."""
 
+    DEFAULT_PERCENTILE = 80
+
     def __init__(
         self,
         seeds_path: pathlib.Path,
@@ -41,7 +43,7 @@ class SeedFolderDataset(Dataset):
             [List[str], List[pathlib.Path]], Dict[pathlib.Path, Optional[Set[int]]]
         ],
         max_len: Optional[int] = None,
-        percentile_len: Optional[int] = None,
+        percentile_len: int = DEFAULT_PERCENTILE,
     ) -> None:
         """
         Initialize a PyTorch Dataset for seeds and their coverage bitmaps.
@@ -89,7 +91,12 @@ class SeedFolderDataset(Dataset):
 
         # Get coverage for new seeds and recompute coverage bitmap
         if new_seeds:
-            self.raw_coverage_info.update(self.bitmap_func(self.target, new_seeds))
+            new_raw = self.bitmap_func(self.target, new_seeds)
+            filtered_raw: Dict[pathlib.Path, Set[int]] = {
+                seed: cov for seed, cov in new_raw.items()
+                if cov is not None
+            }
+            self.raw_coverage_info.update(filtered_raw)
             self.seed_list, self.reduced_bitmap = create_bitmap_from_raw_coverage(
                 self.raw_coverage_info
             )
@@ -105,7 +112,8 @@ class SeedFolderDataset(Dataset):
         else:
             max_len = self.max_len
         self.max_file_size = min(max_file_size, max_len)
-        self.max_bitmap_size = self.reduced_bitmap.shape[1]
+        if self.reduced_bitmap is not None:
+            self.max_bitmap_size = self.reduced_bitmap.shape[1]
 
     def __len__(self) -> int:
         """Return the number of seeds in the dataset."""
@@ -167,7 +175,7 @@ class CoverageSeedDataset(SeedFolderDataset):
         seeds_path: pathlib.Path,
         target: List[str],
         max_len: Optional[int] = None,
-        percentile_len: Optional[int] = None,
+        percentile_len: int = SeedFolderDataset.DEFAULT_PERCENTILE,
     ) -> None:
         """
         Initialize a PyTorch Dataset for coverage-based seeds.
@@ -270,7 +278,7 @@ def read_seeds(seed_list: List[Union[pathlib.Path, str]]) -> List[np.ndarray]:
 
 def compute_input_size_from_seeds(
     seeds_path: pathlib.Path, percentile: int = 80, margin: int = 5
-) -> int:
+) -> int:# remember we ignore percentile_len when max_len is provided
     """
     Compute the maximum allowed size for seeds based on a heuristic:
 

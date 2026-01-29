@@ -33,9 +33,9 @@ import torch
 from torch.utils.data import random_split, DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.optim import AdamW
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, average_precision_score
 
-from neuzzpp.data_loaders import CoverageSeedHandler, SeedFolderHandler, seed_data_generator, SeedFolderDataset
+from neuzzpp.data_loaders import seed_data_generator, SeedFolderDataset, CoverageSeedDataset
 #from neuzzpp.models import MLP, create_logits_model
 from neuzzpp.models import MLP # our MLP class has forward_logits, which we use in place of the keras create_logits_model
 from neuzzpp.mutations import compute_one_mutation_info
@@ -50,9 +50,12 @@ log_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(me
 console_logger.setFormatter(log_formatter)
 logger.addHandler(console_logger)
 
+# Use GPU if we can
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn.Module:
+
+def train_model(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn.Module:
     """
     Function loading the dataset from the seeds folder, building and training the model.
 
@@ -96,7 +99,7 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
 
     optimizer = AdamW(model.parameters(), lr=args.lr)
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=1000)
-    criterion = torch.nn.BCELoss()
+    criterion = torch.nn.BCEWithLogitsLoss()
     early_stopping = EarlyStopping()
 
     for epoch in range(args.epochs):
@@ -107,9 +110,12 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
         # training
         model.train()
         for batch_inputs, batch_labels in train_dataloader:
+            batch_inputs = batch_inputs.to(device)
+            batch_labels = batch_labels.to(device)
+
             optimizer.zero_grad()
-            outputs = model(batch_inputs)
-            loss = criterion(outputs, batch_labels)
+            logits = model(batch_inputs)
+            loss = criterion(logits, batch_labels.float())
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * batch_inputs.size(0)
@@ -120,20 +126,23 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
         with torch.no_grad():
             if val_dataloader is not None:
                 for batch_inputs, batch_labels in val_dataloader:
-                    outputs = model(batch_inputs)
-                    loss = criterion(outputs, batch_labels)
+                    batch_inputs = batch_inputs.to(device)
+                    batch_labels = batch_labels.to(device)
+
+                    logits = model(batch_inputs)
+                    loss = criterion(logits, batch_labels.float())
                     val_loss += loss.item() * batch_inputs.size(0)
                     total_samples += batch_inputs.size(0)
             else:
                 for batch_inputs, batch_labels in train_dataloader:
-                    outputs = model(batch_inputs)
-                    loss = criterion(outputs, batch_labels)
+                    logits = model(batch_inputs)
+                    loss = criterion(logits, batch_labels.float())
                     val_loss += loss.item() * batch_inputs.size(0)
                     total_samples += batch_inputs.size(0)
         avg_val_loss = val_loss / total_samples if total_samples > 0 else 0
             
         # also saves best model (just state_dict to memory, not disk)
-        early_stopping(avg_val_loss)
+        early_stopping(avg_val_loss, model)
 
         if early_stopping.early_stop:
             logger.info(f"Early stopping at epoch {epoch+1}")
@@ -146,6 +155,9 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
             best_model_path = model_path / "model_best.pt"
             torch.save(model.state_dict(), best_model_path)
 
+
+
+
     # Compute evaluation metrics on validation data
     if args.val_split > 0.0:
         model.eval()
@@ -153,134 +165,38 @@ def train(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn
         all_preds = []
         all_labels = []
         with torch.no_grad():
+            assert val_dataloader is not None
             for batch_inputs, batch_labels in val_dataloader:
-                outputs = model(batch_inputs)
-                all_preds.append(outputs.numpy())
+                logits = model(batch_inputs)
+                probs = torch.sigmoid(logits)
+                all_preds.append(probs.numpy())
                 all_labels.append(batch_labels.numpy())        
 
-
-
-        y_true = seed_handler.val_set[1]
-        y_pred = preds_val > class_threshold
+        all_preds = torch.cat(all_preds, dim=0).numpy()
+        y_true = torch.cat(all_labels, dim=0).numpy()
+    
+        y_pred = all_preds > class_threshold
         acc = accuracy_score(y_true.flatten(), y_pred.flatten())
-        tp = np.sum(np.where(np.logical_and(y_true == y_pred, y_pred == 1), True, False), axis=0)
-        tn = np.sum(np.where(np.logical_and(y_true == y_pred, y_pred == 0), True, False), axis=0)
-        fp = np.sum(np.where(np.logical_and(y_true != y_pred, y_pred == 1), True, False), axis=0)
-        fn = np.sum(np.where(np.logical_and(y_true != y_pred, y_pred == 0), True, False), axis=0)
-        assert (tp + tn + fp + fn == seed_handler.val_size).all()
-        assert tp.shape[0] == tn.shape[0] == fp.shape[0] == fn.shape[0] == y_true.shape[1]
+
+        tp = np.sum((y_true == y_pred) & (y_pred == 1), axis=0)
+        tn = np.sum((y_true == y_pred) & (y_pred == 0), axis=0)
+        fp = np.sum((y_true != y_pred) & (y_pred == 1), axis=0)
+        fn = np.sum((y_true != y_pred) & (y_pred == 0), axis=0)
+
+        assert (tp + tn + fp + fn == y_true.shape[0]).all()
+        assert tp.shape[0] == y_true.shape[1]
+
         prec = np.divide(tp, tp + fp, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fp) != 0)
         recall = np.divide(tp, tp + fn, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fn) != 0)
-        f1 = np.divide(2 * tp, 2 * tp + fp + fn, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fp + fn) != 0)
-        prc = tf.keras.metrics.AUC(curve="PR", multi_label=True, num_labels=y_true.shape[1])
-        prc.update_state(y_true, y_pred)
+        f1 = np.divide(2 * tp, 2 * tp + fp + fn, out=np.zeros_like(tp, dtype=np.float64), where=(2*tp + fp + fn) != 0)
+        pr_auc = average_precision_score(y_true, all_preds, average="micro")
         print(
-            f"Acc: {acc}, prec: {prec.mean()}, recall: {recall.mean()}, f1: {f1.mean()}, pr-auc: {prc.result().numpy()}"
+            f"Acc: {acc}, prec: {prec.mean()}, recall: {recall.mean()}, f1: {f1.mean()}, pr-auc: {pr_auc}"
         )
-
-
             
     return model
 
-def train_model(args: argparse.Namespace, seed_handler: SeedFolderHandler):
-    """
-    Function loading the dataset from the seeds folder, building and training the model.
 
-    Args:
-        args: Input args of the script.
-        seed_handler: Data loading object initialized for the seed folder that will be used
-            for training.
-
-    Returns:
-        Trained model.
-    """
-    # (Re-)create data generators
-    seed_handler.load_seeds_from_folder()
-    seed_handler.split_dataset(random_seed=args.random_seed)
-    training_generator = seed_handler.get_generator(batch_size=args.batch_size, subset="training")
-    if args.val_split > 0.0:
-        validation_generator = seed_handler.get_generator(
-            batch_size=args.batch_size, subset="validation"
-        )
-        monitor_metric = "val_prc"
-    else:
-        validation_generator = None
-        monitor_metric = "prc"
-
-    # Compute class frequencies and weights
-    _, initial_bias = seed_handler.get_class_weights()
-
-    # Create training callbacks
-    seeds_path = pathlib.Path(args.seeds)
-    model_path = seeds_path.parent / "models"
-    callbacks = []
-    if not args.fast:
-        model_save = ModelCheckpoint(
-            str(model_path / "model.h5"),
-            verbose=0,
-            save_best_only=True,
-            monitor=monitor_metric,
-            mode="max",
-        )
-        callbacks.append(model_save)
-    if args.early_stopping is not None:
-        es = EarlyStopping(monitor=monitor_metric, patience=args.early_stopping, mode="max")
-        callbacks.append(es)
-
-    # Create model
-    if not args.fast:
-        tb_callback = LRTensorBoard(log_dir=str(model_path / "tensorboard"), write_graph=False)
-        callbacks.append(tb_callback)
-    model = MLP(
-        input_dim=seed_handler.max_file_size,
-        output_dim=seed_handler.max_bitmap_size,
-        lr=args.lr,
-        ff_dim=args.n_hidden_neurons,
-        output_bias=initial_bias,
-        fast=args.fast,
-    )
-
-    # Fit model
-    model.model.fit(
-        training_generator,
-        steps_per_epoch=np.ceil(seed_handler.training_size / args.batch_size),
-        validation_data=validation_generator,
-        validation_steps=None
-        if validation_generator is None
-        else np.ceil(seed_handler.val_size / args.batch_size),
-        epochs=args.epochs,
-        callbacks=callbacks,
-        verbose=2,
-    )
-
-    # Compute evaluation metrics on validation data
-    if args.val_split > 0.0:
-        class_threshold = 0.5  # Classification threshold, use default of 0.5
-        val_gen = seed_data_generator(
-            *seed_handler.val_set, args.batch_size, seed_handler.max_file_size
-        )
-        preds_val = model.model.predict(
-            val_gen, steps=np.ceil(seed_handler.val_size / args.batch_size)
-        )
-        y_true = seed_handler.val_set[1]
-        y_pred = preds_val > class_threshold
-        acc = accuracy_score(y_true.flatten(), y_pred.flatten())
-        tp = np.sum(np.where(np.logical_and(y_true == y_pred, y_pred == 1), True, False), axis=0)
-        tn = np.sum(np.where(np.logical_and(y_true == y_pred, y_pred == 0), True, False), axis=0)
-        fp = np.sum(np.where(np.logical_and(y_true != y_pred, y_pred == 1), True, False), axis=0)
-        fn = np.sum(np.where(np.logical_and(y_true != y_pred, y_pred == 0), True, False), axis=0)
-        assert (tp + tn + fp + fn == seed_handler.val_size).all()
-        assert tp.shape[0] == tn.shape[0] == fp.shape[0] == fn.shape[0] == y_true.shape[1]
-        prec = np.divide(tp, tp + fp, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fp) != 0)
-        recall = np.divide(tp, tp + fn, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fn) != 0)
-        f1 = np.divide(2 * tp, 2 * tp + fp + fn, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fp + fn) != 0)
-        prc = tf.keras.metrics.AUC(curve="PR", multi_label=True, num_labels=y_true.shape[1])
-        prc.update_state(y_true, y_pred)
-        print(
-            f"Acc: {acc}, prec: {prec.mean()}, recall: {recall.mean()}, f1: {f1.mean()}, pr-auc: {prc.result().numpy()}"
-        )
-
-    return model.model
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -382,14 +298,13 @@ def main(argv: Sequence[str] = tuple(sys.argv)) -> None:
         )
     create_work_folders(seeds_path.parent)
 
-    data_loader = CoverageSeedHandler(  # Only edge coverage supported for now
+    data_loader = CoverageSeedDataset(  # Only edge coverage supported for now
         seeds_path,
         args.target,
         args.max_len,
-        args.percentile_len,
-        args.val_split,
+        args.percentile_len
     )
-    model: Optional[MLP] = None
+    model: Optional[torch.nn.Module] = None
     out_pipe = open(output_pipe, "w")
     max_grads = os.environ.get("NEUZZPP_MAX_GRADS")
     n_grads = None if max_grads is None else int(max_grads)
@@ -404,8 +319,8 @@ def main(argv: Sequence[str] = tuple(sys.argv)) -> None:
                 n_seeds_last_training = len(list(seeds_path.glob("id*")))
                 time_last_training = int(time.time())
 
-                model = train_model(args, data_loader)
-                grad_model = create_logits_model(model)
+                grad_model = train_model(args, data_loader) # now our model outputs logits
+                # grad_model = create_logits_model(model)
 
             # Generate gradients for requested seed
             target_path = pathlib.Path(str(seeds_path) + seed_name.strip())

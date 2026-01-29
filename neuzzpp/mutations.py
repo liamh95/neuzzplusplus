@@ -18,7 +18,6 @@ import pathlib
 from typing import Generator, List, Optional, Tuple, Union
 
 import numpy as np
-import tensorflow as tf
 
 from neuzzpp.data_loaders import get_seed_len, load_normalized_seeds, read_seeds
 from neuzzpp.models import predict_coverage

@@ -22,25 +22,25 @@ from typing import Dict, List, Union
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import tensorflow as tf
+#import tensorflow as tf
 import torch
 
 logger = logging.getLogger(__name__)
 
 
 # TODO: migrate to PyTorch version of TensorBoard
-class LRTensorBoard(tf.keras.callbacks.TensorBoard):
-    """Custom TensorBoard callback that tracks the learning rate."""
+# class LRTensorBoard(tf.keras.callbacks.TensorBoard):
+#     """Custom TensorBoard callback that tracks the learning rate."""
 
-    def on_epoch_end(self, epoch, logs=None):
-        logs = logs or {}
-        lr_schedule = getattr(self.model.optimizer, "lr", None)
-        if callable(lr_schedule):
-            val = lr_schedule(self.model.optimizer.iterations)
-        elif lr_schedule is not None:
-            val = lr_schedule
-        logs.update({"lr": tf.keras.backend.eval(val)})
-        super().on_epoch_end(epoch, logs)
+#     def on_epoch_end(self, epoch, logs=None):
+#         logs = logs or {}
+#         lr_schedule = getattr(self.model.optimizer, "lr", None)
+#         if callable(lr_schedule):
+#             val = lr_schedule(self.model.optimizer.iterations)
+#         elif lr_schedule is not None:
+#             val = lr_schedule
+#         logs.update({"lr": tf.keras.backend.eval(val)})
+#         super().on_epoch_end(epoch, logs)
 
 class EarlyStopping:
     def __init__(self, patience: int=5, delta: float=0.0):
@@ -151,14 +151,14 @@ def _add_to_dict(data_dict, key, value):
 
 
 def _search_afl_plot_data(
-    folder: pathlib.Path, data_columns: List[str], plot_file: str
-) -> Dict[str, pd.DataFrame]:
+   folder: pathlib.Path, data_columns: List[str], plot_file: str
+) -> Dict[str, List[pd.DataFrame]]:
     """
     Search input folder for AFL++ plotting data. The last folder in the path containing the plot
     data file will be considered an experiment trial. If multiple trials are available, they will
     be aggregated into one experiment and a confidence band will be computed.
     """
-    all_plot_data: Dict[str, pd.DataFrame] = {}
+    all_plot_data: Dict[str, List[pd.DataFrame]] = {}
     all_plot_data_files = list(folder.glob(f"**/{plot_file}"))
 
     for plot_data in all_plot_data_files:
@@ -197,7 +197,7 @@ def create_plot_afl_coverage(
     data_columns = ["edges_found"]
     time_column_aflpp = "# relative_time"
     time_column_afl = "relative_time"
-    all_plot_data: Dict[str, pd.DataFrame] = {}
+    all_plot_data: Dict[str, List[pd.DataFrame]] = {}
 
     if not isinstance(folders, list):
         folders = [folders]
@@ -238,23 +238,24 @@ def create_plot_afl_coverage(
             trials[i] = trial
 
     # Merge trials of same experiment in long format
+    merged_plot_data: Dict[str, pd.DataFrame] = {}
     for exp, trials in all_plot_data.items():
         if len(trials) > 1:
-            all_plot_data[exp] = pd.concat(trials, ignore_index=True, sort=False)
+            merged_plot_data[exp] = pd.concat(trials, ignore_index=True, sort=False)
         else:
-            all_plot_data[exp] = trials[0]
+            merged_plot_data[exp] = trials[0]
 
     # Merge experiments in long format
     plot_data_df = None
     if len(all_plot_data) > 1:
         # Merge results from multiple fuzzers
-        plot_data_df = pd.concat(all_plot_data.values(), keys=list(all_plot_data.keys()))
+        plot_data_df = pd.concat(merged_plot_data.values(), keys=list(merged_plot_data.keys()))
         plot_data_df.reset_index(level=0, inplace=True)
         plot_data_df.reset_index(drop=True, inplace=True)
 
     else:
         # Only one fuzzer in experiments
-        for exp, trials in all_plot_data.items():
+        for exp, trials in merged_plot_data.items():
             plot_data_df = trials
             plot_data_df["level_0"] = exp
 
@@ -281,7 +282,7 @@ def create_plot_afl_coverage(
         return plot
 
 
-def _read_last_line_csv(path: pathlib.Path, columns: List[str]) -> pd.DataFrame:
+def _read_last_line_csv(path: pathlib.Path, columns: List[str]) -> pd.Series:
     with open(path, "r", encoding="utf-8") as plot_file:
         total_cov = pd.read_csv(plot_file, sep=", ", usecols=columns, engine="python").iloc[-1]
 
