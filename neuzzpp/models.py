@@ -30,9 +30,6 @@ class MLP(nn.Module):
         logits = self.fc2(x)
         return logits
 
-
-# Unlike keras version, we don't have a create_logits_model() function
-# the idea is that we'd do something like model.forward_logits(x) to get the output of that
     
 def predict_coverage(model: MLP, inputs: List[np.ndarray]) -> np.ndarray:
     """
@@ -41,16 +38,22 @@ def predict_coverage(model: MLP, inputs: List[np.ndarray]) -> np.ndarray:
     The input data is first normalized and preprocessed to the length required by the model.
 
     Args:
-        model: Keras model predicting coverage bitmap from program input.
+        model: Pytorch model predicting coverage bitmap from program input.
         inputs: List or equivalent of non-normalized inputs.
     """
     
+    # truncate
+    inputs_preproc = [input[-model.input_dim:] for input in inputs]
 
-    # need to mimic keras' pad_sequences
-    inputs_preproc = pad_sequences(inputs, maxlen=model.input_dim)
-    inputs_preproc = inputs_preproc.to(torch.float32) / 255.0
+    # pad and normalize
+    for input in inputs_preproc:
+        pad_length = model.input_dim - len(input)
+        if pad_length > 0:
+            input = np.pad(input, pad_length)
+        input = input.astype("float32") / 255.0
 
     model.eval()
+    # TODO: inputs need to be tensors
     with torch.no_grad():
         preds = model(inputs_preproc).cpu().numpy()
     model.train()

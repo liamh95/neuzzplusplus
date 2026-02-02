@@ -24,23 +24,10 @@ import pandas as pd
 import seaborn as sns
 #import tensorflow as tf
 import torch
+from torch.nn.utils.rnn import pad_sequence
 
 logger = logging.getLogger(__name__)
 
-
-# TODO: migrate to PyTorch version of TensorBoard
-# class LRTensorBoard(tf.keras.callbacks.TensorBoard):
-#     """Custom TensorBoard callback that tracks the learning rate."""
-
-#     def on_epoch_end(self, epoch, logs=None):
-#         logs = logs or {}
-#         lr_schedule = getattr(self.model.optimizer, "lr", None)
-#         if callable(lr_schedule):
-#             val = lr_schedule(self.model.optimizer.iterations)
-#         elif lr_schedule is not None:
-#             val = lr_schedule
-#         logs.update({"lr": tf.keras.backend.eval(val)})
-#         super().on_epoch_end(epoch, logs)
 
 class EarlyStopping:
     def __init__(self, patience: int=5, delta: float=0.0):
@@ -386,21 +373,11 @@ def kill_fuzzer(fuzzer_command: str = "afl-fuzz", output_stream=subprocess.DEVNU
     subprocess.call(["pkill", "-f", fuzzer_command], stdout=output_stream, stderr=output_stream)
 
 
-def pad_sequences(sequences, maxlen=None, padding='pre', truncating='pre', padding_value=0):
-    ret = []
+def pad_sequences(sequences: List[torch.Tensor], maxlen = None, padding='right', truncating='pre') -> torch.Tensor:
     if maxlen is None:
         maxlen = max([len(seq) for seq in sequences])
-    for seq in sequences:
-        if truncating == 'pre':
-            seq = seq[-maxlen:]
-        else:
-            seq = seq[:maxlen]
-        
-        pad_len = maxlen - len(seq)
-        if padding == 'pre':
-            seq = torch.cat([torch.full((pad_len,), padding_value), seq])
-        else:
-            seq = torch.cat([seq, torch.full((pad_len,), padding_value)])
-        ret.append(seq)
+    truncated = [seq[-maxlen:] for seq in sequences] if truncating == 'pre' else [seq[:maxlen] for seq in sequences]
 
-    return torch.stack(ret)
+    padded = pad_sequence(truncated, batch_first=True, padding_side=padding)
+    return padded
+

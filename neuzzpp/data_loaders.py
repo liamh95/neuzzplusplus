@@ -23,6 +23,7 @@ import numpy as np
 import torch
 # from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
+from torch.nn.utils.rnn import pad_sequence
 
 from neuzzpp.preprocess import create_bitmap_from_raw_coverage, create_path_coverage_bitmap
 from neuzzpp.utils import get_max_file_size, pad_sequences
@@ -72,7 +73,7 @@ class SeedFolderDataset(Dataset):
         self.max_file_size: int = 0
         self.max_bitmap_size: int = 0
 
-        # Load seeds on initialization
+        # Load seeds on initialization?
         self.load_seeds_from_folder()
 
     def load_seeds_from_folder(self) -> None:
@@ -130,13 +131,16 @@ class SeedFolderDataset(Dataset):
             Tuple of (normalized_seed, coverage_bitmap) as torch tensors.
         """
         seed_path = self.seed_list[idx]
-        seed = read_seed(seed_path)
+        seed = read_seed(seed_path) # this is an np.ndarray
 
-        # Normalize seed
-        seed_padded = pad_sequences([seed], padding='post', maxlen=self.max_file_size)[0]
-        seed_normalized = seed_padded.astype("float32") / 255.0
+        seed = seed[-self.max_file_size:]
+        pad_length = self.max_file_size - len(seed)
+        if pad_length > 0:
+            seed = np.pad(seed, pad_length)
+        seed_normalized = seed.astype("float32") / 255.0
 
         # Get bitmap
+        assert self.reduced_bitmap is not None
         bitmap = self.reduced_bitmap[idx].astype("int32")
 
         return torch.from_numpy(seed_normalized), torch.from_numpy(bitmap)
@@ -148,6 +152,7 @@ class SeedFolderDataset(Dataset):
         Returns:
             Tuple of (class_weights_dict, initial_bias).
         """
+        assert self.reduced_bitmap is not None
         bitmap_flat = self.reduced_bitmap.flatten()
         n_neg = np.count_nonzero(bitmap_flat == 0)
         n_total = bitmap_flat.size
@@ -195,37 +200,6 @@ class CoverageSeedDataset(SeedFolderDataset):
         )
 
 
-def seed_data_generator(
-    seed_list: List[Union[pathlib.Path, str]],
-    bitmaps: np.ndarray,
-    batch_size: int,
-    max_seed_len: int,
-) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
-    """
-    Data generator based on a list of seeds and their coverage information.
-
-    Args:
-        seed_list: List of file names for seeds.
-        bitmaps: Coverage bitmaps corresponding to the seeds in the list.
-        batch_size: Size of batches to create.
-        max_seed_len: Maximum length of seeds.
-
-    Returns:
-        Batch of data containing tuples of seeds and coverage bitmaps.
-    """
-    while 1:
-        n_seeds = len(seed_list)
-        shuffled_indices = np.random.permutation(n_seeds)
-
-        # Load a batch of training data
-        for i in range(0, n_seeds, batch_size):
-            batch_indices = shuffled_indices[i : min(n_seeds, i + batch_size)]
-            batch_seeds = [seed_list[seed_index] for seed_index in batch_indices]
-            x = load_normalized_seeds(batch_seeds, max_len=max_seed_len)
-            y = bitmaps[batch_indices]
-            yield x, y
-
-
 def load_normalized_seeds(seed_list: List[Union[pathlib.Path, str]], max_len: int) -> np.ndarray:
     """
     Read a batch of seeds from files, normalize and convert to Numpy array.
@@ -239,13 +213,16 @@ def load_normalized_seeds(seed_list: List[Union[pathlib.Path, str]], max_len: in
         Seed content of length `max_len`, normalized between 0 and 1.
     """
     seeds = read_seeds(seed_list)
+    seeds_preproc = [seed[-max_len:] for seed in seeds]
 
     # Pad seed with zeros up to max_len
-    seeds_preproc  = pad_sequences(seeds, padding='post', maxlen=max_len)
-    seeds_preproc = seeds_preproc.astype("float32") / 255.0
+    for seed in seeds_preproc:
+        pad_length = max_len - len(seed)
+        if pad_length > 0:
+            seed = np.pad(seed, pad_length)
+        seed = seed.astype("float32") / 255.0
 
-    return seeds_preproc
-
+    return np.array(seeds_preproc)
 
 def read_seed(path: Union[pathlib.Path, str]) -> np.ndarray:
     """
@@ -299,7 +276,7 @@ def compute_input_size_from_seeds(
     return int((1.0 + 0.01 * margin) * perc)
 
 
-def seed_len_percentile(seeds_path: pathlib.Path, percentile: int = 90) -> int:
+def seed_len_percentile(seeds_path: pathlib.Path, percentile: int = 90) -> float:
     """
     Compute the `percentile` seed length for a given input folder.
 

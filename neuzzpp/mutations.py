@@ -18,9 +18,10 @@ import pathlib
 from typing import Generator, List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 
-from neuzzpp.data_loaders import get_seed_len, load_normalized_seeds, read_seeds
-from neuzzpp.models import predict_coverage
+from neuzzpp.data_loaders import get_seed_len, read_seeds, load_normalized_seeds
+from neuzzpp.models import predict_coverage, MLP
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def _choose_block_len(limit: int, rng: Optional[np.random.Generator] = None) -> 
 
     rand_limit = min(max_value, limit) - min_value + 1
     rand_val = rng.integers(rand_limit) if rng is not None else np.random.randint(rand_limit)
-    return min_value + rand_val
+    return int(min_value + rand_val)
 
 
 def generate_one_mutation(
@@ -99,12 +100,12 @@ def generate_one_mutation(
         high_index = iteration_ranges[iter_cnt + 1]
 
         # Apply up steps
-        up_steps = max(
+        up_steps = int(max(
             [
                 255 - seed[indices[index]] if signs[index] == 1 else seed[indices[index]]
                 for index in range(low_index, high_index)
             ]
-        )
+        ))
         mutated_seeds = np.tile(seed, (up_steps, 1))
         mutated_seeds[:, indices[low_index:high_index]] = (
             mutated_seeds[:, indices[low_index:high_index]]
@@ -116,12 +117,12 @@ def generate_one_mutation(
         del mutated_seeds
 
         # Apply down steps
-        down_steps = max(
+        down_steps = int(max(
             [
                 255 - seed[indices[index]] if signs[index] == -1 else seed[indices[index]]
                 for index in range(low_index, high_index)
             ]
-        )
+        ))
         mutated_seeds = np.tile(seed, (down_steps, 1))
         mutated_seeds[:, indices[low_index:high_index]] = (
             mutated_seeds[:, indices[low_index:high_index]]
@@ -320,7 +321,7 @@ def choose_rand_unseen_edges(n_mutations: int, bitmap: np.ndarray) -> np.ndarray
 
 
 def compute_gradient(
-    model,
+    model: torch.nn.Module,
     target_edge: int,
     seed: np.ndarray,
     seed_len: int,
@@ -347,28 +348,29 @@ def compute_gradient(
           * the direction of the gradients for each byte.
     """
     # Compute gradients
-    inputs = tf.cast(seed, tf.float32)
-    with tf.GradientTape() as tape:
-        tape.watch(inputs)
-        logits = model(inputs)[:, target_edge]
-    grads = tf.squeeze(tape.gradient(logits, inputs))
-    sorting_index = tf.reverse(tf.argsort(tf.abs(grads[:seed_len])), axis=[-1])
+    inputs = torch.tensor(seed, dtype=torch.float32, requires_grad=True)
+    logits = model(inputs)[:, target_edge]
+    logits.sum().backward()
+    assert inputs.grad is not None
+    grads = inputs.grad.squeeze()
+
+    sorting_index = torch.argsort(grads[:seed_len].abs(), descending=True)
 
     if mutation_strategy == "sign":
         # Use sign of gradients as seed mutation
-        val = tf.sign(tf.gather(grads, sorting_index)).numpy()
-        sorting_index = sorting_index.numpy()
+        val = torch.sign(grads[sorting_index]).cpu().numpy()
     elif mutation_strategy == "rand":
         # Use random signs as seed mutation
         val = np.random.choice([1, -1], seed_len, replace=True)
     else:
         raise ValueError(f"Unknown mutation strategy: {mutation_strategy}")
+    sorting_index = sorting_index.cpu().numpy()
 
     assert len(val) == len(sorting_index)
     return sorting_index, val
 
 
-def compute_mutations_success(model: tf.keras.Model, mutations: List[np.ndarray]) -> np.ndarray:
+def compute_mutations_success(model: MLP, mutations: List[np.ndarray]) -> np.ndarray:
     """
     Produce an array of coverage counts per code edge / memory address, where each value represents the
     no. of mutations covering that edge, according to the predictions of the model.
@@ -388,9 +390,9 @@ def compute_mutations_success(model: tf.keras.Model, mutations: List[np.ndarray]
 
 
 def compute_mutations_success_all(
-    model: tf.keras.Model,
-    seed_list: List[pathlib.Path],
-    save_path: Optional[pathlib.Path] = None,
+    model: MLP,
+    seed_list: List[Union[pathlib.Path, str]],
+    save_path: pathlib.Path,
     n_iter: Optional[int] = None,
 ) -> None:
     """
@@ -408,14 +410,17 @@ def compute_mutations_success_all(
         save_path: Folder to create for storing coverage results for the computed mutations.
         n_iter: No. of iterations cf. Neuzz.
     """
-    n_edges = model.output.shape[-1]
+    n_edges = model.output_dim
     # Read all seeds and get all predictions
     seeds = read_seeds(seed_list)
 
+    if isinstance(save_path, str):
+        save_path = pathlib.Path(save_path)
     # Create storage folder
     save_path.mkdir(parents=True, exist_ok=True)
 
     for i, seed_file in enumerate(seed_list):
+        seed_file = pathlib.Path(seed_file) if isinstance(seed_file, str) else seed_file
         if (save_path / (seed_file.name + ".npy")).exists():
             logger.info(f"Found mutation file for seed: {seed_file}. Skipping.")
             continue

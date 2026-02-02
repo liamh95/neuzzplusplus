@@ -35,11 +35,10 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.optim import AdamW
 from sklearn.metrics import accuracy_score, average_precision_score
 
-from neuzzpp.data_loaders import seed_data_generator, SeedFolderDataset, CoverageSeedDataset
-#from neuzzpp.models import MLP, create_logits_model
-from neuzzpp.models import MLP # our MLP class has forward_logits, which we use in place of the keras create_logits_model
+from neuzzpp.data_loaders import SeedFolderDataset, CoverageSeedDataset
+from neuzzpp.models import MLP
 from neuzzpp.mutations import compute_one_mutation_info
-from neuzzpp.utils import (LRTensorBoard, create_work_folders,
+from neuzzpp.utils import (create_work_folders,
                            model_needs_retraining, EarlyStopping)
 
 # Configure logger - console
@@ -52,6 +51,8 @@ logger.addHandler(console_logger)
 
 # Use GPU if we can
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# TODO: Tensorboard stuff?
 
 
 
