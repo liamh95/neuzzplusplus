@@ -347,7 +347,9 @@ def replay_corpus(out_path: pathlib.Path, target: pathlib.Path):
     try:
         subprocess.run(
             [
-                pathlib.Path("/mlfuzz") / "scripts" / "replay_corpus.py",
+                # for now, we just copy Bosch Research's mlfuzz replay_corpus.py to our scripts folder
+                #pathlib.Path("/mlfuzz") / "scripts" / "replay_corpus.py",
+                pathlib.Path(__file__).resolve().parents[1] / "scripts" / "replay_corpus.py",
                 out_path / "queue",
                 out_path / "replayed_plot_data",
                 target.parent / (target.stem + ".afl"),
@@ -372,12 +374,4 @@ def kill_fuzzer(fuzzer_command: str = "afl-fuzz", output_stream=subprocess.DEVNU
     # 'afl-fuzz' process so that we can kill it with subprocess.terminate()
     subprocess.call(["pkill", "-f", fuzzer_command], stdout=output_stream, stderr=output_stream)
 
-
-def pad_sequences(sequences: List[torch.Tensor], maxlen = None, padding='right', truncating='pre') -> torch.Tensor:
-    if maxlen is None:
-        maxlen = max([len(seq) for seq in sequences])
-    truncated = [seq[-maxlen:] for seq in sequences] if truncating == 'pre' else [seq[:maxlen] for seq in sequences]
-
-    padded = pad_sequence(truncated, batch_first=True, padding_side=padding)
-    return padded
 

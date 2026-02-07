@@ -170,7 +170,7 @@ void start_ml_model_process(ml_mutator_state_t *data) {
     data->in_pipe_fd = fopen(data->in_pipe_file_name, "r");
     data->out_pipe_fd = fopen(data->out_pipe_file_name, "w");
     
-    if(data->out_pipe_fd < 0 || data->in_pipe_fd < 0)
+    if(data->out_pipe_fd == NULL || data->in_pipe_fd == NULL)
       perror("Opening FIFOs failed!"); 
 
   }
@@ -298,7 +298,7 @@ uint32_t afl_custom_fuzz_count (ml_mutator_state_t *data, const u8 *buf, size_t 
   }
 
   // Cannot use ML model until we have enough seeds 
-  if(data->afl->queued_paths <= INITIAL_TRAIN_THRESHOLD) {
+  if(data->afl->queued_items <= INITIAL_TRAIN_THRESHOLD) {
     return 0;
   }
 
@@ -316,8 +316,10 @@ uint32_t afl_custom_fuzz_count (ml_mutator_state_t *data, const u8 *buf, size_t 
    * */
   char *current_fname = strrchr((char*) data->afl->queue_cur->fname, '/');
 
+  const char *send_fname = current_fname ? current_fname : (char*) data->afl->queue_cur->fname; // if there is no '/' in the filename, use the whole filename
+
   //send filename to ml part
-  fputs(current_fname, data->out_pipe_fd);
+  fputs(send_fname, data->out_pipe_fd);
   fputc('\n', data->out_pipe_fd);
   fflush(data->out_pipe_fd);
 
@@ -380,11 +382,11 @@ uint32_t afl_custom_fuzz_count (ml_mutator_state_t *data, const u8 *buf, size_t 
 /* Copied from NEUZZ!! */
 /* More adaptive implementation by max now. Do a iteration only if its size fits fully into the original seed*/
 /* flip interesting locations */
-  for(int iter=0 ;iter < data->num_of_iterations && pow(2, iter + 1) <= buf_size; iter++){
+  for(int iter=0 ;iter < data->num_of_iterations && (1 << (iter+1)) <= buf_size; iter++){
 
     /* find mutation range for every iteration */
-    int low_index = iter == 0 ? 0 : pow(2, iter); // [14] = {0,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192};
-    int up_index = pow(2, iter + 1);
+    int low_index = iter == 0 ? 0 : (1 << iter); // [14] = {0,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192};
+    int up_index = 1 << (iter+1);
 
     for(int index=low_index; index<up_index; index=index+1){
       u8 cur_up_step = 0;
@@ -539,8 +541,8 @@ size_t afl_custom_fuzz(ml_mutator_state_t *data, uint8_t *buf, size_t buf_size,
   }
 
   //get indices for current range of iteration (exponential increase)
-  int low_index = data->iter_cnt == 0 ? 0 : pow(2, data->iter_cnt); // [14] = {0,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192};
-  int up_index = pow(2, data->iter_cnt  + 1);
+  int low_index = data->iter_cnt == 0 ? 0 : 1 << (data->iter_cnt); // [14] = {0,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192};
+  int up_index = 1 << (data->iter_cnt  + 1);
 
   if(data->up_steps_buf[data->iter_cnt] > 0) { //Up-Steps left?
 
@@ -631,7 +633,7 @@ size_t afl_custom_fuzz(ml_mutator_state_t *data, uint8_t *buf, size_t buf_size,
    * (Optional)
    *
    * @param data pointer returned by afl_customm_init for this custom mutator
-   * @paramp[in] max_description_len maximum size avaliable for the description.
+   * @param[in] max_description_len maximum size avaliable for the description.
    *             A longer return string is legal, but will be truncated.
    * @return A valid ptr to a 0-terminated string.
    *         An empty or NULL return will result in a default description

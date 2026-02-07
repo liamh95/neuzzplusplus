@@ -16,17 +16,16 @@
 import logging
 import os
 import pathlib
-from typing import Callable, Dict, Generator, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 # import tensorflow as tf
 import torch
 # from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
-from torch.nn.utils.rnn import pad_sequence
 
 from neuzzpp.preprocess import create_bitmap_from_raw_coverage, create_path_coverage_bitmap
-from neuzzpp.utils import get_max_file_size, pad_sequences
+from neuzzpp.utils import get_max_file_size
 
 logger = logging.getLogger(__name__)
 
