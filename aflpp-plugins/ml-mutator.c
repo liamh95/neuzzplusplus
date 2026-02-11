@@ -91,6 +91,10 @@ void start_ml_model_process(ml_mutator_state_t *data) {
   // Let the ML python script run in other process, so that we can change env variables and eventually let the training proceed in background
   data->ml_pid = fork();
 
+  if(data->ml_pid < 0){
+    PFATAL("Forking failed: %s", sterror(errno));
+  }
+
   if(data->ml_pid == 0) { //child process
 
     //unset env variables from afl
@@ -166,9 +170,15 @@ void start_ml_model_process(ml_mutator_state_t *data) {
 
   } else { //parent process
     
+    // Could result in deadlock?
     // this will block until the other end connects
-    data->in_pipe_fd = fopen(data->in_pipe_file_name, "r");
-    data->out_pipe_fd = fopen(data->out_pipe_file_name, "w");
+    // data->in_pipe_fd = fopen(data->in_pipe_file_name, "r");
+    // data->out_pipe_fd = fopen(data->out_pipe_file_name, "w");
+
+    int fd_in = open(data->in_pipe_file_name,  O_RDWR | O_NOCTTY);
+    data->in_pipe_fd = fdopen(fd_in, "r");
+    int fd_out = open(data->out_pipe_file_name, O_RDWR | O_NOCTTY);
+    data->out_pipe_fd = fdopen(fd_out, "w");
     
     if(data->out_pipe_fd == NULL || data->in_pipe_fd == NULL)
       perror("Opening FIFOs failed!"); 
@@ -333,6 +343,9 @@ uint32_t afl_custom_fuzz_count (ml_mutator_state_t *data, const u8 *buf, size_t 
     char* loc_str = strtok(data->gradient_file_line,"|");
     char* sign_str = strtok(NULL,"|");
 
+    if(!loc_str || !sign_str) {
+      FATAL("Received malformed gradient information from ML model! loc_str: (%s), sign_str: (%s)", loc_str, sign_str);
+    }
 
     
     /* count elements and ensure buffer sizes */
@@ -343,7 +356,7 @@ uint32_t afl_custom_fuzz_count (ml_mutator_state_t *data, const u8 *buf, size_t 
       uint32_t max_num_of_gradients =  strtoul(getenv("NEUZZPP_MAX_GRADS"), NULL, 10);
       data->num_of_gradients = MIN(max_num_of_gradients, data->num_of_gradients);
     }
-    data->num_of_iterations = (uint32_t) data->num_of_gradients == 1 ? 1 : log2(data->num_of_gradients);
+    data->num_of_iterations = (uint32_t) data->num_of_gradients == 1 ? 1 : (uint32_t) floor(log2(data->num_of_gradients));
 
     //Neuzz had fixed 2048 operations here, which does not work anymore (must be < num_of_gradients)!
     data->num_of_ins_del_operations = (uint32_t) (data->num_of_gradients * INS_DEL_OPERATIONS_RATIO);
@@ -494,6 +507,9 @@ static inline u32 choose_block_len(afl_state_t *afl, u32 limit) {
 
 }
 
+
+// Looks weird, but buf is always ml_mutator_state.loc_buf, which is a BUFFER OF INDICES
+// In this case, we're just checking that the index is not out of bounds of the seed's length.
 void check_valid_index(int index, int32_t* buf, size_t buf_size) {
   if(buf[index] >= buf_size){ //Should be ensured by python part
     WARNF("index points out of seed's length. Maybe disable trim!");
@@ -578,9 +594,18 @@ size_t afl_custom_fuzz(ml_mutator_state_t *data, uint8_t *buf, size_t buf_size,
     //Now do deletions and insertions at top locations
 
     if(data->ins_del_mut_cnt % 2 == 0) { //alternating del ins operations
-      int del_loc = data->loc_buf[data->ins_del_mut_cnt/2];
-      //check for valid index
-      check_valid_index(del_loc, data->loc_buf, buf_size);
+      // We should be treating ins_del_mut_cnt/2 as an INDEX into the loc_buf
+      // int del_loc = data->loc_buf[data->ins_del_mut_cnt/2];
+      // //check for valid index
+      // check_valid_index(del_loc, data->loc_buf, buf_size);
+
+      int del_idx = data->ins_del_mut_cnt/2;
+      if ( (uint32_t)del_idx >= data->num_of_gradients ){
+        WARNF("Del index out of range. Adjusting");
+        del_idx = data->num_of_gradients ? data->num_of_gradients - 1 : 0;
+      }
+      check_valid_index(del_idx, data->loc_buf, buf_size);
+      int del_loc = data->loc_buf[del_idx];
 
       int cut_len = choose_block_len(data->afl, buf_size-del_loc);
 
@@ -594,19 +619,28 @@ size_t afl_custom_fuzz(ml_mutator_state_t *data, uint8_t *buf, size_t buf_size,
       return buf_size - cut_len;
 
     } else { //ins operation
-        int ins_loc = data->loc_buf[data->ins_del_mut_cnt/2];
-        //check for valid index
-        check_valid_index(ins_loc, data->loc_buf, buf_size);
+        // int ins_loc = data->loc_buf[data->ins_del_mut_cnt/2];
+        // //check for valid index
+        // check_valid_index(ins_loc, data->loc_buf, buf_size);
+        int ins_idx = data->ins_del_mut_cnt/2;
+        if ( (uint32_t)ins_idx >= data->num_of_gradients ){
+          WARNF("Ins index out of range. Adjusting");
+          ins_idx = data->num_of_gradients ? data->num_of_gradients - 1 : 0;
+        }
+        check_valid_index(ins_idx, data->loc_buf, buf_size);
+        int ins_loc = data->loc_buf[ins_idx];
 
         size_t cut_len = choose_block_len(data->afl, (buf_size-1) / 2); //divide by 2, so that cut_len + rand_loc < buf_size
-        int rand_loc = (random()%cut_len);
+        // Use rand() instead of random() since we seeded with srand()
+        //int rand_loc = (random()%cut_len);
+        int rand_loc = (rand() % cut_len);
 
 
         maybe_grow(BUF_PARAMS(data, ml_mutator), buf_size + cut_len);
         /* random insertion at a critical offset */
         memcpy(data->ml_mutator_buf, buf, ins_loc);
-        memmove(data->ml_mutator_buf+ins_loc, data->ml_mutator_buf+rand_loc, cut_len);
-        memmove(data->ml_mutator_buf+ins_loc+cut_len, data->ml_mutator_buf+ins_loc, buf_size - ins_loc );
+        memmove(data->ml_mutator_buf+ins_loc+cut_len, buf+ins_loc, buf_size - ins_loc );
+        memcpy(data->ml_mutator_buf + ins_loc, buf+rand_loc, cut_len);
 
         *out_buf = data->ml_mutator_buf;
 
@@ -684,8 +718,19 @@ void afl_custom_deinit(ml_mutator_state_t *data) {
 
 
   //Close named pipes
-  fclose(data->out_pipe_fd);
-  fclose(data->in_pipe_fd);
+  if(data->out_pipe_fd){
+    if(fclose(data->out_pipe_fd) != 0){
+      WARNF("fclose(out_pipe_fd) failed: %s", sterror(errno));
+      data->out_pipe_fd = NULL;
+    }
+  }
+
+  if(data->in_pipe_fd){
+    if(fclose(data->in_pipe_fd) != 0){
+      WARNF("fclose(in_pipe_fd) failed: %s", sterror(errno));
+      data->in_pipe_fd = NULL;
+    }
+  }
 
   if (data->ml_pid) {
     int status;
@@ -698,15 +743,22 @@ void afl_custom_deinit(ml_mutator_state_t *data) {
   unlink(data->in_pipe_file_name);
 
   free(data->ml_mutator_buf);
+  data->ml_mutator_buf = NULL;
   free(data->up_steps_buf);
+  data->up_steps_buf = NULL;
   free(data->down_steps_buf);
+  data->down_steps_buf = NULL;
   free(data->out_pipe_file_name);
+  data->out_pipe_file_name = NULL;
   free(data->in_pipe_file_name);
+  data->in_pipe_file_name = NULL;
 
   if (data->gradient_file_line) {
     free(data->gradient_file_line);
+    data->gradient_file_line = NULL;
   }
   
 
   free(data);
+  data = NULL;
 }
