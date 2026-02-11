@@ -3,7 +3,13 @@
 Partial rewrite of Bosch Research's neuz++. The main differences will be
 1. The Python version is now 3.14 instead of 3.8(?)
 2. The ML stuff will be in PyTorch instead of Keras+TensorFlow
-3. The AFL custom mutator will be written in Python instead of C (for now -- if it turns out to be really slow, then it'll be in C)
+3. ~~The AFL custom mutator will be written in Python instead of C (for now -- if it turns out to be really slow, then it'll be in C)~~
+    3a. AFL++ does not expose the same information to a Python mutator as it does to a C mutator. Namely, a C mutator gets access to an `afl_state_t` struct and a Python mutator doesn't (at least not in any way that I can figure out). From what I gather, we need this state to get things like coverage bitmaps and the seed queue. Eventually, I'd like to see if we can still accomplish what we want in Python, but for now, I'm just going to tweak Bosch Research's C mutator.
+
+# Progress
+
+1. PyTorch model mostly done.
+2. Touching up the C mutator.
 
 
 # Neuzz++ - Neural program smoothing for fuzzing in AFL++
