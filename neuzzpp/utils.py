@@ -243,7 +243,7 @@ def create_plot_afl_coverage(
     else:
         # Only one fuzzer in experiments
         for exp, trials in merged_plot_data.items():
-            plot_data_df = trials
+            plot_data_df = trials.copy()
             plot_data_df["level_0"] = exp
 
     if plot_data_df is not None:
@@ -307,7 +307,8 @@ def compute_coverage_experiment(folder: Union[str, pathlib.Path]) -> pd.DataFram
             total_cov_trials = []
             for trial in fuzzer.glob("trial-*"):
                 plot_files = list(trial.glob("**/replayed_plot_data"))
-                assert len(plot_files) == 1
+                if len(plot_files) != 1:
+                    raise ValueError(f"Expected exactly one plot file in {trial}, but found {len(plot_files)}.")
                 plot_file = plot_files[0]
 
                 # Read total coverage

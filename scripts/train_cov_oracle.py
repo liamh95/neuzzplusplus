@@ -56,7 +56,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 
-def train_model(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> torch.nn.Module:
+def train_model(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> MLP:
     """
     Function loading the dataset from the seeds folder, building and training the model.
 
@@ -305,7 +305,7 @@ def main(argv: Sequence[str] = tuple(sys.argv)) -> None:
         args.max_len,
         args.percentile_len
     )
-    model: Optional[torch.nn.Module] = None
+    model: Optional[MLP] = None
     out_pipe = open(output_pipe, "w")
     max_grads = os.environ.get("NEUZZPP_MAX_GRADS")
     n_grads = None if max_grads is None else int(max_grads)
@@ -320,13 +320,14 @@ def main(argv: Sequence[str] = tuple(sys.argv)) -> None:
                 n_seeds_last_training = len(list(seeds_path.glob("id*")))
                 time_last_training = int(time.time())
 
-                grad_model = train_model(args, data_loader) # now our model outputs logits
-                # grad_model = create_logits_model(model)
+                model = train_model(args, data_loader) # now our model outputs logits
+                model.to(device)
+                # model = create_logits_model(model)
 
             # Generate gradients for requested seed
-            target_path = pathlib.Path(str(seeds_path) + seed_name.strip())
+            target_path = seeds_path / seed_name.strip()
             sorting_index_lst, gradient_lst = compute_one_mutation_info(
-                grad_model, target_path, n_grads
+                model, target_path, n_grads
             )
             out_pipe.write(",".join(sorting_index_lst) + "|" + ",".join(gradient_lst) + "\n")
             out_pipe.flush()

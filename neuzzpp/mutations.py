@@ -184,7 +184,7 @@ def generate_all_mutations(
 
 
 def compute_one_mutation_info(
-    model, seed_name: Union[pathlib.Path, str], n_keep_vals: Optional[int] = None
+    model: MLP, seed_name: Union[pathlib.Path, str], n_keep_vals: Optional[int] = None
 ) -> Tuple[List[str], List[str]]:
     """
     Generate and return gradient information for one seed and one mutation targeting
@@ -200,14 +200,14 @@ def compute_one_mutation_info(
         * List of indices that would sort the gradients by magnitude.
         * List of gradient signs. The length of the two lists matches.
     """
-    input_dim = model.input.shape.as_list()[-1]
+    input_dim = model.input_dim
     seed = load_normalized_seeds([seed_name], max_len=input_dim)
     seed_len = min(get_seed_len(seed_name), input_dim)
     if n_keep_vals is None:
         n_keep_vals = seed_len
     else:
         n_keep_vals = min(n_keep_vals, seed_len)
-    target_edge = np.random.choice(model.output.shape.as_list()[-1])  # Random edge targeted
+    target_edge = np.random.choice(model.output_dim)  # Random edge targeted
     sorting_index, gradient = compute_gradient(model, target_edge, seed, n_keep_vals, "sign")
     sorting_index_lst = [str(el) for el in sorting_index]
     gradient_lst = [str(int(el)) for el in gradient]
@@ -241,8 +241,9 @@ def compute_all_mutation_info(
             Options are "rand" and "unseen".
     """
     grads_folder = seeds_path.parent / "grads"
+    grads_folder.mkdir(parents=True, exist_ok=True)
     seed_list = list(seed for seed in seeds_path.glob("*") if seed.is_file())
-    input_dim = model.input.shape.as_list()[-1]
+    input_dim = model.input_dim
 
     # Determine how many mutations to generate
     if n_mutations is None:
@@ -472,11 +473,11 @@ def parse_grad_file(path: pathlib.Path) -> List[Tuple[np.ndarray, np.ndarray]]:
             for line in grad:
                 indices, signs = line.split("|")
                 indices_arr = np.array(indices.split(","), dtype=int)
-                signs_arr = np.array(signs.split(","), dtype=bool)
+                signs_arr = np.array(signs.split(","), dtype=int)
                 assert len(indices_arr) == len(signs_arr)
 
                 all_grads.append((indices_arr, signs_arr))
-    except:
-        logger.warning(f"Gradient file not found: {path}. Skipping.")
+    except (FileNotFoundError, ValueError, IndexError, AssertionError) as err:
+        logger.warning(f"Gradient file could not be parsed: {path}. Error: {err}. Skipping.")
 
     return all_grads

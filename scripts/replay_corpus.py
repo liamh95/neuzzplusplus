@@ -48,32 +48,37 @@ args = parser.parse_args()
 
 target_with_args = args.target
 seeds_path = pathlib.Path(args.input)
+if not seeds_path.exists():
+    logger.error(f"Input corpus path does not exist: {seeds_path}")
+    sys.exit(1)
 seed_list = [seed for seed in seeds_path.glob("*") if seed.is_file() and seed.name != ".cur_input"]
 # Order by timestamp in filename
 seed_list = sorted(seed_list, key=lambda f: get_timestamp_millis_from_filename(f.name))
 
-out_file = open(args.output, "w")
-out_file.write("# relative_time, edges_found, test_case\n")
+with open(args.output, "w") as out_file:
+    out_file.write("# relative_time, edges_found, test_case\n")
 
-all_edges: Set[int] = set()
-out: bytes
-cov_tool = CoverageBuilder(target_with_args)
+    all_edges: Set[int] = set()
+    out: bytes
+    cov_tool = CoverageBuilder(target_with_args)
 
-for seed in seed_list:
-    try:
-        command = cov_tool.get_command_for_seed(seed)
-        out = subprocess.check_output(command, timeout=60.0)
+    for seed in seed_list:
+        try:
+            command = cov_tool.get_command_for_seed(seed)
+            out = subprocess.check_output(command, timeout=60.0)
 
-        edges_curr_seed: Set[int] = set()
-        for line in out.splitlines():
-            edge = int(line.split(b":")[0])
-            if edge not in all_edges:
-                all_edges.add(edge)
-        out_file.write(
-            f'{int(get_timestamp_millis_from_filename(seed.name) / 1000)}, {len(all_edges)}, "{seed.name}"\n'
-        )
-    except subprocess.CalledProcessError as err:
-        logger.error(f"Bitmap extraction failed: {err}")
-
-
-out_file.close()
+            for line in out.splitlines():
+                try:
+                    edge = int(line.split(b":")[0])
+                    if edge not in all_edges:
+                        all_edges.add(edge)
+                except (IndexError, ValueError) as err:
+                    logger.warning(f"Malformed line in coverage output for seed {seed.name}: {line}. Error: {err}")
+                    continue
+            out_file.write(
+                f'{int(get_timestamp_millis_from_filename(seed.name) / 1000)}, {len(all_edges)}, "{seed.name}"\n'
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout while processing seed: {seed.name}")
+        except subprocess.CalledProcessError as err:
+            logger.error(f"Bitmap extraction failed: {err}")

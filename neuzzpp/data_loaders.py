@@ -135,7 +135,7 @@ class SeedFolderDataset(Dataset):
         seed = seed[-self.max_file_size:]
         pad_length = self.max_file_size - len(seed)
         if pad_length > 0:
-            seed = np.pad(seed, pad_length)
+            seed = np.pad(seed, (0, pad_length), mode="constant")
         seed_normalized = seed.astype("float32") / 255.0
 
         # Get bitmap
@@ -212,14 +212,16 @@ def load_normalized_seeds(seed_list: List[Union[pathlib.Path, str]], max_len: in
         Seed content of length `max_len`, normalized between 0 and 1.
     """
     seeds = read_seeds(seed_list)
-    seeds_preproc = [seed[-max_len:] for seed in seeds]
-
-    # Pad seed with zeros up to max_len
-    for seed in seeds_preproc:
-        pad_length = max_len - len(seed)
+    seeds_preproc = []
+    
+    # Truncate, pad, and normalize seeds
+    for seed in seeds:
+        truncated = seed[-max_len:]
+        pad_length = max_len - len(truncated)
         if pad_length > 0:
-            seed = np.pad(seed, pad_length)
-        seed = seed.astype("float32") / 255.0
+            truncated = np.pad(truncated, (0, pad_length), mode="constant")
+        normalized = truncated.astype("float32") / 255.0
+        seeds_preproc.append(normalized)
 
     return np.array(seeds_preproc)
 

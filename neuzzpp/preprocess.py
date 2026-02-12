@@ -67,7 +67,7 @@ class CoverageBuilder:
             Command to call in iterable format.
         """
         self.command[self._seed_position] = str(seed)
-        return self.command
+        return list(self.command)
 
 
 def create_path_coverage_bitmap(
@@ -101,8 +101,14 @@ def create_path_coverage_bitmap(
             out = subprocess.check_output(command)
 
             for line in out.splitlines():
-                edge = int(line.split(b":")[0])
-                edges_curr_seed.add(edge)
+                # Log and skip malformed lines
+                try:
+                    edge = int(line.split(b":")[0])
+                    edges_curr_seed.add(edge)
+                except (IndexError, ValueError) as err:
+                    logger.warning(f"Malformed line in coverage output for seed {seed}: {line}. Error: {err}")
+                    continue
+                
             raw_bitmap[seed] = edges_curr_seed
         except subprocess.CalledProcessError as err:
             raw_bitmap[seed] = None
@@ -133,6 +139,13 @@ def create_bitmap_from_raw_coverage(
         The bitmap is reduced by merging together the edges (columns) that have identical coverage
         under the existing seeds.
     """
+    if not raw_bitmap:
+        raise ValueError("No raw bitmap provided or raw bitmap is empty.")
+    # remove Nones from bitmap and corresponding seeds
+    for seed in list(raw_bitmap.keys()):
+        if raw_bitmap[seed] is None:
+            del raw_bitmap[seed]
+
     seed_list = list(raw_bitmap.keys())
     all_edges = set.union(*raw_bitmap.values())
     all_edges_indices = {addr: index for index, addr in enumerate(all_edges)}

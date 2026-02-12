@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # from torch.nn.utils.rnn import pad_sequence
-from neuzzpp.utils import pad_sequences
 
 
 class MLP(nn.Module):
@@ -42,20 +41,20 @@ def predict_coverage(model: MLP, inputs: List[np.ndarray]) -> np.ndarray:
         inputs: List or equivalent of non-normalized inputs.
     """
     
-    # truncate
-    inputs_preproc = [input[-model.input_dim:] for input in inputs]
+    # truncate, pad, and normalize
+    inputs_preproc = []
+    for input in inputs:
+        truncated = input[-model.input_dim:]
+        pad_length = max(0, model.input_dim - len(truncated))
+        padded = np.pad(truncated, (0, pad_length), mode="constant")
+        normalized = padded.astype("float32") / 255.0
+        inputs_preproc.append(normalized)
 
-    # pad and normalize
-    for input in inputs_preproc:
-        pad_length = model.input_dim - len(input)
-        if pad_length > 0:
-            input = np.pad(input, pad_length)
-        input = input.astype("float32") / 255.0
-
+    # Convert to tensor and predict
+    inputs_tensor = torch.from_numpy(np.array(inputs_preproc))
     model.eval()
-    # TODO: inputs need to be tensors
     with torch.no_grad():
-        preds = model(inputs_preproc).cpu().numpy()
+        preds = model(inputs_tensor).cpu().numpy()
     model.train()
     return preds > 0.5
 

@@ -92,7 +92,7 @@ void start_ml_model_process(ml_mutator_state_t *data) {
   data->ml_pid = fork();
 
   if(data->ml_pid < 0){
-    PFATAL("Forking failed: %s", sterror(errno));
+    PFATAL("Forking failed: %s", strerror(errno));
   }
 
   if(data->ml_pid == 0) { //child process
@@ -132,7 +132,7 @@ void start_ml_model_process(ml_mutator_state_t *data) {
     /* Read the command line file */
     u8 *tmp = alloc_printf("%s/cmdline", data->afl->out_dir);
     FILE *cmdline_file = fopen((char*) tmp, "r");
-    if (cmdline_file <= 0) { PFATAL("Unable to read '%s'", tmp); }
+    if (cmdline_file == NULL) { PFATAL("Unable to read '%s'", tmp); }
     ck_free(tmp);
 
     char *line = NULL;
@@ -308,7 +308,7 @@ uint32_t afl_custom_fuzz_count (ml_mutator_state_t *data, const u8 *buf, size_t 
   }
 
   // Cannot use ML model until we have enough seeds 
-  if(data->afl->queued_items <= INITIAL_TRAIN_THRESHOLD) {
+  if(data->afl->queued_paths <= INITIAL_TRAIN_THRESHOLD) {
     return 0;
   }
 
@@ -356,7 +356,7 @@ uint32_t afl_custom_fuzz_count (ml_mutator_state_t *data, const u8 *buf, size_t 
       uint32_t max_num_of_gradients =  strtoul(getenv("NEUZZPP_MAX_GRADS"), NULL, 10);
       data->num_of_gradients = MIN(max_num_of_gradients, data->num_of_gradients);
     }
-    data->num_of_iterations = (uint32_t) data->num_of_gradients == 1 ? 1 : (uint32_t) floor(log2(data->num_of_gradients));
+    data->num_of_iterations = data->num_of_gradients == 1 ? 1 : (uint32_t) floor(log2(data->num_of_gradients));
 
     //Neuzz had fixed 2048 operations here, which does not work anymore (must be < num_of_gradients)!
     data->num_of_ins_del_operations = (uint32_t) (data->num_of_gradients * INS_DEL_OPERATIONS_RATIO);
@@ -552,7 +552,7 @@ size_t afl_custom_fuzz(ml_mutator_state_t *data, uint8_t *buf, size_t buf_size,
   *out_buf = buf;
 
   //check if previous iteration has been finished -> go to next
-  while(data->up_steps_buf[data->iter_cnt] == 0 && data->down_steps_buf[data->iter_cnt] == 0 && data->iter_cnt < data->num_of_iterations) {
+  while(data->iter_cnt < data->num_of_iterations && data->up_steps_buf[data->iter_cnt] == 0 && data->down_steps_buf[data->iter_cnt] == 0) {
     data->iter_cnt++;
   }
 
@@ -720,14 +720,14 @@ void afl_custom_deinit(ml_mutator_state_t *data) {
   //Close named pipes
   if(data->out_pipe_fd){
     if(fclose(data->out_pipe_fd) != 0){
-      WARNF("fclose(out_pipe_fd) failed: %s", sterror(errno));
+      WARNF("fclose(out_pipe_fd) failed: %s", strerror(errno));
       data->out_pipe_fd = NULL;
     }
   }
 
   if(data->in_pipe_fd){
     if(fclose(data->in_pipe_fd) != 0){
-      WARNF("fclose(in_pipe_fd) failed: %s", sterror(errno));
+      WARNF("fclose(in_pipe_fd) failed: %s", strerror(errno));
       data->in_pipe_fd = NULL;
     }
   }
