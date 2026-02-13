@@ -69,11 +69,18 @@ def train_model(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> ML
     """ 
     # Load and split dataset, setup dataloaders
     seed_dataset.load_seeds_from_folder()
-    rng = torch.Generator().manual_seed(args.random_seed) if args.random_seed is not None else None
+    if seed_dataset.max_file_size is None or seed_dataset.max_file_size <= 0:
+        raise ValueError(f"Invalid max_file_size: {seed_dataset.max_file_size}")
+    if seed_dataset.max_bitmap_size is None or seed_dataset.max_bitmap_size <= 0:
+        raise ValueError(f"Invalid max_bitmap_size: {seed_dataset.max_bitmap_size}")
+
+
+    #chosen by a fair dice roll, guaranteed to be random
+    rng = torch.Generator().manual_seed(args.random_seed) if args.random_seed is not None else torch.Generator().manual_seed(4)
     if args.val_split > 0.0:
         training_dataset, validation_dataset = random_split(seed_dataset, [1.0 - args.val_split, args.val_split], generator=rng)
         train_dataloader = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True)
-        val_dataloader = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=False)
+        val_dataloader = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=True)
     else:
         training_dataset = seed_dataset
         # Set this to training_dataset?
@@ -101,7 +108,7 @@ def train_model(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> ML
     optimizer = AdamW(model.parameters(), lr=args.lr)
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=1000)
     criterion = torch.nn.BCEWithLogitsLoss()
-    early_stopping = EarlyStopping()
+    early_stopping = EarlyStopping(patience=args.early_stopping) if args.early_stopping is not None else EarlyStopping()
 
     for epoch in range(args.epochs):
         train_loss = 0.0
@@ -136,6 +143,9 @@ def train_model(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> ML
                     total_samples += batch_inputs.size(0)
             else:
                 for batch_inputs, batch_labels in train_dataloader:
+                    batch_inputs = batch_inputs.to(device)
+                    batch_labels = batch_labels.to(device)
+
                     logits = model(batch_inputs)
                     loss = criterion(logits, batch_labels.float())
                     val_loss += loss.item() * batch_inputs.size(0)
@@ -170,11 +180,11 @@ def train_model(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> ML
             for batch_inputs, batch_labels in val_dataloader:
                 logits = model(batch_inputs)
                 probs = torch.sigmoid(logits)
-                all_preds.append(probs.numpy())
-                all_labels.append(batch_labels.numpy())        
+                all_preds.append(probs.cpu().numpy())
+                all_labels.append(batch_labels.cpu().numpy())        
 
-        all_preds = torch.cat(all_preds, dim=0).numpy()
-        y_true = torch.cat(all_labels, dim=0).numpy()
+        all_preds = np.concatenate(all_preds, axis=0)
+        y_true = np.concatenate(all_labels, axis=0)
     
         y_pred = all_preds > class_threshold
         acc = accuracy_score(y_true.flatten(), y_pred.flatten())
@@ -184,7 +194,7 @@ def train_model(args: argparse.Namespace, seed_dataset: SeedFolderDataset) -> ML
         fp = np.sum((y_true != y_pred) & (y_pred == 1), axis=0)
         fn = np.sum((y_true != y_pred) & (y_pred == 0), axis=0)
 
-        assert (tp + tn + fp + fn == y_true.shape[0]).all()
+        assert(tp + tn + fp + fn == y_true.shape[0]).all()
         assert tp.shape[0] == y_true.shape[1]
 
         prec = np.divide(tp, tp + fp, out=np.zeros_like(tp, dtype=np.float64), where=(tp + fp) != 0)
@@ -275,8 +285,12 @@ def main(argv: Sequence[str] = tuple(sys.argv)) -> None:
     parser = create_parser()
     args = parser.parse_args(argv[1:])
 
-    # Configure logger - file
     seeds_path = pathlib.Path(args.seeds)
+    if not seeds_path.exists() or not seeds_path.is_dir():
+        logger.error(f"Invalid seeds path: {seeds_path}")
+        sys.exit(1)
+
+    # Configure logger - file
     file_logger = logging.FileHandler(seeds_path.parent / "training.log")
     file_logger.setFormatter(log_formatter)
     logger.addHandler(file_logger)
@@ -297,6 +311,11 @@ def main(argv: Sequence[str] = tuple(sys.argv)) -> None:
         raise ValueError(
             f"Invalid `val_split`. Expected value in [0, 1), received: {args.val_split}."
         )
+    if args.early_stopping is not None and args.early_stopping < 1:
+        raise ValueError(
+            f"Invalid `early_stopping`. Expected positive integer or None, received: {args.early_stopping}."
+        )
+    
     create_work_folders(seeds_path.parent)
 
     data_loader = CoverageSeedDataset(  # Only edge coverage supported for now
@@ -306,32 +325,31 @@ def main(argv: Sequence[str] = tuple(sys.argv)) -> None:
         args.percentile_len
     )
     model: Optional[MLP] = None
-    out_pipe = open(output_pipe, "w")
     max_grads = os.environ.get("NEUZZPP_MAX_GRADS")
     n_grads = None if max_grads is None else int(max_grads)
-    with open(input_pipe, "r") as seed_fifo:
-        for seed_name in seed_fifo:
-            # (Re-)train model if necessary
-            if (
-                model_needs_retraining(seeds_path, time_last_training, n_seeds_last_training)
-                or model is None
-            ):
-                # Update info for model retraining
-                n_seeds_last_training = len(list(seeds_path.glob("id*")))
-                time_last_training = int(time.time())
+    with open(output_pipe, "w") as out_pipe:
+        with open(input_pipe, "r") as seed_fifo:
+            for seed_name in seed_fifo:
+                # (Re-)train model if necessary
+                if (
+                    model_needs_retraining(seeds_path, time_last_training, n_seeds_last_training)
+                    or model is None
+                ):
+                    # Update info for model retraining
+                    n_seeds_last_training = len(list(seeds_path.glob("id*")))
+                    time_last_training = int(time.time())
 
-                model = train_model(args, data_loader) # now our model outputs logits
-                model.to(device)
-                # model = create_logits_model(model)
+                    model = train_model(args, data_loader) # now our model outputs logits
+                    model.to(device)
+                    # model = create_logits_model(model)
 
-            # Generate gradients for requested seed
-            target_path = seeds_path / seed_name.strip()
-            sorting_index_lst, gradient_lst = compute_one_mutation_info(
-                model, target_path, n_grads
-            )
-            out_pipe.write(",".join(sorting_index_lst) + "|" + ",".join(gradient_lst) + "\n")
-            out_pipe.flush()
-    out_pipe.close()
+                # Generate gradients for requested seed
+                target_path = seeds_path / seed_name.strip()
+                sorting_index_lst, gradient_lst = compute_one_mutation_info(
+                    model, target_path, n_grads
+                )
+                out_pipe.write(",".join(sorting_index_lst) + "|" + ",".join(gradient_lst) + "\n")
+                out_pipe.flush()
 
 
 if __name__ == "__main__":
