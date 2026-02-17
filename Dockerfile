@@ -4,7 +4,7 @@ FROM nvidia/cuda:13.0.0-cudnn-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-
+# System stuff
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     clang \
@@ -23,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 
+# AFL Stuff
 ARG AFLPP_VERSION=v4.35c
-
 WORKDIR /opt
 
 RUN git clone --depth 1 --branch ${AFLPP_VERSION} https://github.com/AFLplusplus/AFLplusplus.git && \
@@ -34,16 +34,13 @@ RUN git clone --depth 1 --branch ${AFLPP_VERSION} https://github.com/AFLplusplus
 
 ENV AFL_PATH=/opt/AFLplusplus
 
-# --------------------------------------------------------------------
-# Install uv (Python package manager)
-# --------------------------------------------------------------------
+
+
+# Python Stuff
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
-# --------------------------------------------------------------------
-# Python Environment Setup
-# --------------------------------------------------------------------
-WORKDIR /app
+WORKDIR /env
 
 # Copy dependency files first for Docker layer caching
 COPY requirements.in requirements-cuda.txt uv.lock ./
@@ -54,22 +51,10 @@ RUN uv venv .venv && \
     uv pip install -r requirements.in && \
     uv pip install -r requirements-cuda.txt
 
-ENV PATH="/app/.venv/bin:${PATH}"
+ENV PATH="/env/.venv/bin:${PATH}"
 
-# --------------------------------------------------------------------
-# Copy Project Source
-# --------------------------------------------------------------------
-COPY . .
+# Development stuff
+WORKDIR /workspace
 
-# --------------------------------------------------------------------
-# Build Custom AFL++ Mutator
-# --------------------------------------------------------------------
-WORKDIR /app/aflpp-plugins
-RUN make
 
-WORKDIR /app
-
-# --------------------------------------------------------------------
-# Default Entry
-# --------------------------------------------------------------------
 CMD ["bash"]
